@@ -17,7 +17,8 @@ for d in $DECKS; do
     cp "$work/Dati.cart.out" "$here/tests/reference/$d.fld"; echo "$d: reference updated"
   else
     echo "--- $d"
-    python3 "$here/tests/compare_fields.py" "$work/Dati.cart.out" "$here/tests/reference/$d.fld" 1e-10 | tail -2 || status=1
+    python3 "$here/tests/compare_fields.py" "$work/Dati.cart.out" "$here/tests/reference/$d.fld" 1e-10 | tail -2
+    [ "${PIPESTATUS[0]}" -eq 0 ] || status=1
   fi
   rm -rf "$work"
 done
