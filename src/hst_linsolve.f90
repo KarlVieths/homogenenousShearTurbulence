@@ -203,6 +203,10 @@ contains
     complex(C_DOUBLE_COMPLEX) :: xm1, pm1, qm1, xm2, pm2, qm2  ! back-substituted rows m-1, m-2 as xm - pm x(n-2) - qm x(n-1)
     complex(C_DOUBLE_COMPLEX) :: t0p, t0q, t1p, t1q            ! the same for rows 0, 1 (the sums)
     complex(C_DOUBLE_COMPLEX) :: c10, c20, c21, s1, s2, m11, m12, m21, m22, det, xb1, xb2, yb1, yb2, xk, xk1, xk2
+    integer(C_INT), parameter :: nb = 4                        ! rows per iteration of the backward sweep
+    real(C_DOUBLE) :: u1s(0:nb - 1), u2s(0:nb - 1), b1s(0:nb - 1), b2s(0:nb - 1)
+    complex(C_DOUBLE_COMPLEX) :: xs(0:nb - 1)
+    integer(C_INT) :: k
 
     m = n - 2
     cph = conjg(ph)
@@ -283,11 +287,24 @@ contains
     dst(n - 1, jl) = xb2
     ! Backward sweep of b minus the border columns times the border, into
     ! dst, seeded with the border (rows m-2, m-1 reach it through U1, U2).
+    ! nb rows per iteration, their loads issued together before any of them
+    ! is used: the compiler keeps the loads of a row behind the stores of
+    ! the previous one, and one memory latency per row would bound the sweep.
     yb1 = cph*xb1; yb2 = cph*xb2
     xk1 = xb1; xk2 = xb2
-    do i = m - 1, 0, -1
-      xk = X(il, i) - B1(il, i)*yb1 - B2(il, i)*yb2 - U1(il, i)*xk1 - U2(il, i)*xk2
-      dst(i, jl) = xk
+    do i = m - 1, nb - 1, -nb
+      do k = 0, nb - 1
+        xs(k) = X(il, i - k); b1s(k) = B1(il, i - k); b2s(k) = B2(il, i - k); u1s(k) = U1(il, i - k); u2s(k) = U2(il, i - k)
+      end do
+      do k = 0, nb - 1
+        xk = xs(k) - b1s(k)*yb1 - b2s(k)*yb2 - u1s(k)*xk1 - u2s(k)*xk2
+        dst(i - k, jl) = xk
+        xk2 = xk1; xk1 = xk
+      end do
+    end do
+    do j = i, 0, -1                                            ! the rows left over
+      xk = X(il, j) - B1(il, j)*yb1 - B2(il, j)*yb2 - U1(il, j)*xk1 - U2(il, j)*xk2
+      dst(j, jl) = xk
       xk2 = xk1; xk1 = xk
     end do
   end subroutine cyclic_penta_solve
