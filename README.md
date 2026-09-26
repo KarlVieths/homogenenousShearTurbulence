@@ -144,24 +144,25 @@ production = dissipation (FINDINGS.md).
 ## Performance
 
 Seconds per full time step (three substeps), `examples/bench_*.in`, after
-the line-solver and overlap session of FINDINGS.md (in brackets: after
-the transpose-kernel session, and after the multi-GPU pass):
+the solver-latency session of FINDINGS.md (in brackets: after the
+line-solver and overlap session, and after the transpose-kernel session):
 
 | grid (dealiased) | 1 x A100 | 4 x A100 | 1 x RTX 3060 | istmio2 CPU, 4 ranks |
 | --- | --- | --- | --- | --- |
-| 64 x 128 x 64 | 0.0134 (0.0145, 0.016) | | 0.127 (0.127, 0.13) | 0.89 (0.89, 0.89) |
-| 256 x 256 x 256 | 0.087 (0.099, 0.113) | 0.034 (0.039, 0.042) | 0.98 (0.98, 1.25) | |
-| 512 x 512 x 512 | 0.687 (0.819, 0.955) | 0.227 (0.262, 0.296) | | |
+| 64 x 128 x 64 | 0.0117 (0.0134, 0.0145) | | 0.109 (0.127, 0.127) | 0.70 (0.89, 0.89) |
+| 256 x 256 x 256 | 0.082 (0.087, 0.099) | 0.030 (0.034, 0.039) | 0.85 (0.98, 0.98) | |
+| 512 x 512 x 512 | 0.646 (0.687, 0.819) | 0.216 (0.227, 0.262) | | |
 
 Four A100 use the NCCL transport (`make GPU=1 NCCL=1`); with MPI's
 alltoall the 4-GPU step is 2.5-3x longer (FINDINGS.md).  The RTX 3060
 runs double precision at 1/64 rate, so it gains little from what helps
 the A100; `timing = .true.` prints where the time goes.  Four A100 are
-2.6x one at 256^3 and 3.0x at 512^3; on one GPU the largest items are
-the line solver (24% of the kernel time, latency-bound at 19%
-occupancy), the FFTs (28%) and `buildrhs` (15%), on four the exposed part
-of the alltoall (about 13% of the step; the rest is hidden behind the
-transforms); a second node needs WP6 or a two-node measurement first.
+2.7x one at 256^3 and 3.0x at 512^3; on one GPU the largest items are
+the FFTs (31% of the kernel time), `buildrhs` (17%) and the line solver
+(14%, its two sweeps at two thirds of the bandwidth), on four the
+exposed part of the alltoall (about 13% of the step; the rest is hidden
+behind the transforms); a two-node measurement (`jobs/horeka_2node.slurm`) is
+queued and decides between a deeper overlap and WP6.
 
 ## Status
 
@@ -186,7 +187,7 @@ src/hst_transforms.f90   spectral <-> physical, products, CFL
 src/hst_initial.f90      seeded initial field
 src/hst_io.f90           restart and snapshot files
 src/hst_derivatives.f90  compact stencils, shear-periodic ghost rows
-src/hst_linsolve.f90     cyclic pentadiagonal solves, one thread per mode, rows built on the fly
+src/hst_linsolve.f90     cyclic pentadiagonal solves, one thread per mode, rows built on the fly, real factor
 src/hst_equations.f90    the equations and one RK step
 src/hst_stats.f90        Runtimedata
 src/hst_pressure.f90     pressure at snapshot times

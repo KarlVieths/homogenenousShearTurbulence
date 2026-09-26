@@ -711,3 +711,109 @@ One A100: 11% at 256^3, 16% at 512^3 (the solver); four: 12% and 13%
 the session: line solver 24%, `buildrhs` 15%, cuFFT 28% (four
 transforms), tiled transpose 9%, `build_products` 8.5%,
 `buildrhs_prepare` 5%, `assemble_vvdz` 4%.
+
+## The line solver's latency (2026-09-26, session 6)
+
+Handoff item 1: the two-pass sweep kernel at 1.86 ms per call at 256^3
+on one A100, 55% of the bandwidth at 19% occupancy, with the register
+ideas of the handoff as the candidates.  Reading the kernel for them
+turned up something better: **the interior matrix P is real.**  The
+stencil coefficients are real, and the wrap phase enters only the two
+border rows and, through the wrapped entries of rows 0 and 1, the two
+border columns, where it is one common factor conjg(ph).  So the
+forward sweep can factor P and forward-substitute the border columns in
+real arithmetic (one real division per row instead of a complex one)
+and keep complex arithmetic for the right-hand side alone; U1, U2 and
+the border columns B1, B2 are stored as real and the phase is applied
+to the border values in the back substitution.  The entries of rows
+m-2, m-1 that point at the border are no longer moved out of P: they
+stay in U1, U2 and act through the seed of the back substitution
+(x(n-2), x(n-1)), which also removes the special cases from the sweep.
+128 bytes per row instead of 192, a third of the complex flops, and the
+kernel fits in 80 registers without spills (166 were used before).
+`test_linsolve` at 2e-15, the regressions at 7e-14 (the references
+unchanged); the CPU path is the same code.
+
+Nsight Compute on the A100 (`jobs/horeka_ncu.slurm`, bench_256,
+launches 10-15 of the kernel; ncu locks the SM clock at 1.09 GHz, so
+its durations are 1.3x those of nsys):
+
+| kernel | DRAM bytes per call | duration (ncu) | of the bandwidth | warp cycles per instruction |
+| --- | --- | --- | --- | --- |
+| two-pass complex, 168 registers (session 5) | 1.59 GB | 2.4 ms | 33% (55% in nsys) | |
+| real factor (this session) | 1.08 GB | 1.51-1.59 ms | 44-47% | 20.5 |
+| + backward sweep four rows at a time | 1.08 GB | 1.32-1.42 ms | 48-53% | 17.7 |
+| + right-hand side of the next row prefetched | 1.08 GB | 1.28-1.41 ms | 48-54% | 16.7 |
+| + stencil coefficients of the next row prefetched | 1.08 GB | 1.44 ms | 47% | 15.7 |
+
+The SASS of the real-factor kernel explained the handoff's "two rows of
+loads in flight": the compiler unrolls the backward sweep by four but
+issues the six loads of a row only after the stores of the previous
+one, so each row waits a full memory latency.  Loading four rows into
+registers before any of them is used (a parameter `nb` in
+`cyclic_penta_solve`, the rows left over one by one) is worth 11% of
+the kernel.  The two prefetches after that gained nothing (the second
+even costs instructions), so they are not in the code.  A diagnostic
+build without the backward sweep put the split at 0.6 ms forward, 0.7
+ms backward for the D2V and ETA kinds (ncu clocks), each at 65-70% of
+the bandwidth, with L1 at 43%; the KIND_DY solve is 7% slower than the
+others because its five-point stencil reads the strided field five
+times per row (L1 at 78% in its forward sweep; a sliding window would
+recover most of it, about 1% of the step, not done).  The kernel's
+stalls are scoreboard waits on L1TEX: the strided reads of the field
+(one line per thread per row, 32 sectors per warp request) and the
+write-through of the workspace.  What is left is the structure itself,
+one thread per line reading a y-innermost field; the next step would
+not be local.
+
+A100 timings (`jobs/horeka_ab.slurm`), A = session 5, B = real factor,
+C = B + the four-row backward sweep:
+
+| deck, GPUs | step A | B | C | implicit solves A | B | C | ghosts, dv/dy, u and w A | B | C |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| bench_256, 1 | 0.0877 | 0.0843 | 0.0830 | 0.0108 | 0.0084 | 0.0074 | 0.0070 | 0.0057 | 0.0051 |
+| bench_256, 4 | 0.0339 | 0.0312 | 0.0302 | 0.0047 | 0.0030 | 0.0024 | 0.0033 | 0.0023 | 0.0020 |
+| bench_512, 1 | 0.687 | 0.658 | 0.646 | 0.0770 | 0.0576 | 0.0503 | 0.0493 | 0.0401 | 0.0350 |
+| bench_512, 4 | 0.2267 | 0.2185 | 0.2146 | 0.0221 | 0.0169 | 0.0147 | 0.0139 | 0.0111 | 0.0098 |
+
+(job 5164287; the two phases hold the four line solves of a substep.)
+The sweep kernel in nsys at 256^3: 1834 us per call, 1444, 1219; it is
+1.5x faster than at the start of the session and 14% of the 1-GPU
+kernel time instead of 19%.  The step gains 5% at 256^3 on one GPU, 11%
+on four, 6% and 5% at 512^3.  The solver is now 15% of the step (the
+two phases together) on one GPU and 14% on four.
+
+Register cap: the real-factor kernel needs 80 registers, so the cap of
+168 (three blocks per SM) could drop to 96 (five) or 128 (four).  At
+256^3 on one GPU and 512^3 on four the grid is 255 blocks, all resident
+at once, and the cap cannot matter; at 512^3 on one GPU (1022 blocks)
+five blocks per SM make two waves at 95% instead of four at 79%.
+Measured (job 5164306, C with the three caps):
+
+| deck, GPUs | solves, cap 168 | 96 | 128 | step, 168 | 96 | 128 |
+| --- | --- | --- | --- | --- | --- | --- |
+| bench_256, 1 | 0.0073 | 0.0075 | 0.0073 | 0.0827 | 0.0829 | 0.0821 |
+| bench_256, 4 | 0.0025 | 0.0025 | 0.0026 | 0.0305 | 0.0306 | 0.0301 |
+| bench_512, 1 | 0.0503 | 0.0500 | 0.0492 | 0.646 | 0.648 | 0.646 |
+| bench_512, 4 | 0.0146 | 0.0151 | 0.0148 | 0.2149 | 0.2166 | 0.2161 |
+
+All within the run-to-run noise; the kernel at 256^3 in nsys is 1207 us
+with 168, 1321 with 96 and 1252 with 128 (the freer schedule wins over
+the occupancy, which the 255-block grid cannot use anyway).  The cap
+stays at 168.
+
+**Result** of the session (`jobs/horeka_bench_all.slurm`, job 5164344;
+the RTX 3060 and CPU columns measured on istmio2):
+
+| deck | 1 A100 | 4 A100 | 1 RTX 3060 | istmio2 CPU, 4 ranks | before the session |
+| --- | --- | --- | --- | --- | --- |
+| bench_64 | 0.0117 | | 0.109 | 0.70 | 0.0134 / - / 0.127 / 0.89 |
+| bench_256 | 0.0817 | 0.0304 | 0.85 | | 0.0874 / 0.0338 / 0.98 / - |
+| bench_512 | 0.646 | 0.216 | | | 0.687 / 0.227 |
+
+The cards that run FP64 slowly gain the most (the real division and the
+real elimination): 14% on the RTX 3060, 21% on the CPU.  The two-node
+measurement (`jobs/horeka_2node.slurm`, handoff item 2) was submitted
+on the session-5 build and had not run when the session ended (the dev
+partition has three nodes; the copy on `accelerated` was estimated to
+start the next morning); NEXT_SESSION.md says where its output lands.

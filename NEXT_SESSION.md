@@ -1,16 +1,32 @@
-# Next session: the solver's occupancy, then the second node
+# Next session: the second node
 
 Copy the block at the end as the opening message of the next session.
 
 State at the end of this one: `main` at the commit that adds this file,
-pushed.  Both items of the previous handoff are done: the line solver is
-two passes instead of five (half the bytes; the sweep was bandwidth-bound,
-not latency-bound as the handoff said, see FINDINGS.md), with a register
-cap of 168 for its kernel; and the alltoall overlaps the transforms
-(per-field double-buffered transposes, NCCL on a second stream).  Per
-step on the A100 (README table): 256^3 one GPU 0.099 -> 0.087, four
-0.039 -> 0.034; 512^3 one GPU 0.819 -> 0.687, four 0.262 -> 0.227.  Read
-`README.md`, then FINDINGS.md (the last two sections), then this file.
+pushed.  Item 1 of the previous handoff is done and closed: the line
+solver's interior matrix turned out to be real (the wrap phase only
+touches the border), so the factor and the border columns are real,
+128 bytes per row instead of 192 and one real division per row; the
+backward sweep loads four rows before using any (the compiler put each
+row's loads behind the previous row's stores).  The sweep kernel went
+from 1834 to 1219 us per call at 256^3 on the A100 (its two sweeps are
+each at two thirds of the bandwidth; the remaining stalls are the
+strided reads of the y-innermost field, which the one-thread-per-line
+structure cannot avoid), the step by 5% on one A100 and 11% on four at
+256^3, 6% and 5% at 512^3, and the RTX 3060 and the CPU by 14-21%.  The
+register-idea list of the old handoff is moot: the kernel fits in 80
+registers and lower caps gain nothing (FINDINGS.md, session 6).  Read
+`README.md`, then FINDINGS.md (the last section), then this file.
+
+Item 2, the two-node measurement, is **submitted and not yet run**: the new
+`jobs/horeka_2node.slurm` (4 A100 on one node against 8 on two, NCCL and
+MPI transport, bench_256 and bench_512 with the timer) is queued twice on
+`~/hst` (the session-5 code, the solver difference is known from the A/B
+table), as job 5164289 on `dev_accelerated` (only three nodes, no start
+estimate) and 5164343 on `accelerated` (estimated start 2026-09-27
+10:10).  Their outputs land in `~/hst/hst-2node-<jobid>.out` on HoreKA;
+read them first, then cancel the other job (`scancel`) and rebuild
+`~/hst` from `main` (not before: the queued job runs its binary).
 
 ## Safety net, use it before and after every change
 
@@ -50,71 +66,69 @@ sbatch --ntasks-per-node=4 --gres=gpu:4 --export=ALL,NP=4 jobs/horeka_profile.sl
 sbatch --export=ALL,A_ROOT=$HOME/hst,B_ROOT=$HOME/hst-exp jobs/horeka_ab.slurm       # A/B: both builds, same node, timer + nsys
 sbatch --export=ALL,A_ROOT=$HOME/hst-exp,B_ROOT=$HOME/hst-exp2,C_ROOT=$HOME/hst-exp3 jobs/horeka_ab.slurm   # three-way
 sbatch --export=ALL,HST_ROOT=$HOME/hst-exp,KERNEL=regex:buildrhs,SKIP=6,COUNT=2 jobs/horeka_ncu.slurm   # Nsight Compute counters
+sbatch jobs/horeka_2node.slurm                                # 4 A100 on one node against 8 on two, nccl and mpi
+sbatch --partition=accelerated jobs/horeka_2node.slurm        # the same on the main partition (dev has 3 nodes)
 ```
 
 `dev_accelerated` runs one job per user at a time and queues at most
-four; a two-minute job waits 5-40 minutes.  The A/B job is the way to
-time a change: the same node, both builds back to back, and NCCL's
-alltoall varies by 30% between runs, so never compare alltoall phases
-across jobs.  **The hardware counters are open on the HoreKA compute
-nodes** (`jobs/horeka_ncu.slurm`: DRAM bytes, achieved occupancy,
-registers, stall reasons of a kernel family), not on the ISTM boxes
-(`ERR_NVGPUCTRPERM`).  Use it before believing a byte count or a
-"latency-bound" diagnosis: this session's handoff had the solver at 35%
-of the bandwidth from an estimate, ncu said 82%.  The RTX 3060 is good
-for kernel-level A/Bs with nsys (`mpirun -np N nsys profile -t cuda ...`,
-then `nsys stats --report cuda_gpu_kern_sum`; `cuobjdump -res-usage` on
-the object file gives registers and shared memory per kernel), but it
-runs FP64 at 1/64 rate, so the solver and the FFTs are compute-bound
-there and do not predict the A100 (the new solver kernel takes the same
-time there as the three old ones).
+four; a two-minute job waits 5-40 minutes, and it has only three nodes,
+so a two-node job may sit there for hours ("nodes required are down,
+drained or reserved"): submit it on `accelerated` as well.  The A/B job
+is the way to time a change: the same node, both builds back to back,
+and NCCL's alltoall varies by 30% between runs, so never compare
+alltoall phases across jobs.  The hardware counters are open on the
+HoreKA compute nodes (`jobs/horeka_ncu.slurm`: DRAM bytes, achieved
+occupancy, registers, stall reasons of a kernel family), not on the ISTM
+boxes.  A diagnostic build with one part of a kernel removed, timed
+with the ncu job, is the cheap way to split a kernel's time (session 6
+did it for the two sweeps of the solver).  The RTX 3060 is good for
+kernel-level A/Bs with nsys and for reading the SASS
+(`cuobjdump -sass build-gpu/<file>.o`: the order of loads and stores in
+a loop is what decided session 6's backward sweep), but it runs FP64 at
+1/64 rate, so it does not predict the A100.
 
-## Where the time goes now (FINDINGS.md, last sections)
+## Where the time goes now (FINDINGS.md, last section)
 
-One A100, bench_256, kernel time: line solver 24% (1.86 ms per call for
-1.59 GB, 55% of the bandwidth at 19% occupancy), cuFFT 28% (four
-transforms), `buildrhs` 15%, tiled transpose 9%, `build_products` 8.5%,
-`buildrhs_prepare` 5%, `assemble_vvdz` 4%.  Four A100: the timer phases
-are "to physical: FFTs, transposes, CFL" 20% and "products: FFTs,
-transposes, rhs" 49% (the transposes have no phase of their own any more,
-only their exposed part counts), the implicit solves 15%, ghosts 11%;
-the exposed alltoall is about 13% of the step.
+One A100, bench_256, kernel time: cuFFT 31% (four transforms),
+`buildrhs` 17%, line solver 14% (1.22 ms per call for 1.08 GB, its two
+sweeps each at about two thirds of the bandwidth), tiled transpose 10%,
+`build_products` 10%, `buildrhs_prepare` 5%, `assemble_vvdz` 4%.  Four
+A100: the timer phases are "to physical" 23% and "products" 56% (the
+transposes have no phase of their own, only their exposed part counts),
+the two solve phases 14%; the exposed alltoall is about 13% of the step.
 
 ## What is worth doing, in order
 
-1. **The line solver's remaining third (latency at 19% occupancy).**
-   Local edits inside `cyclic_penta_solve`, no new kernel: fewer
-   registers by construction (the six accumulators of the rows-0-and-1
-   recurrences could be a 2-vector recurrence with four; the ten border
-   coefficients are computed per line after the sweep and could be
-   hoisted; `coef` evaluates fifteen `der` products per row that a
-   per-kind table `cf(iy, j, 0:2)` (coef = cf0 + k2 cf1 + k2^2 cf2, built
-   once per call) would replace by three loads and two FMAs), or two rows
-   of loads in flight in the backward sweep.  Measure each with the A/B
-   job and `jobs/horeka_ncu.slurm` (occupancy, stall reasons); the
-   sweep's upper bound is about 1.1 ms at the bandwidth, so at most
-   another 7% of the 1-GPU step.  Stop when the kernel is at the
-   bandwidth or the edits stop being local.
-2. **The second node.**  Measure `--nodes=2` with the present code first
-   (8 ranks over InfiniBand: NCCL handles it, the alltoall grows by the
-   inter-node share); then the y decomposition (WP6) if that is where
-   the time goes: DESIGN.md 7 (i), the only item left that has to add
-   real structure.
-3. **Deeper overlap** (the alltoalls of the first product group behind
+1. **The second node.**  Read the two-node outputs above.  If the 8-GPU
+   step is close to half the 4-GPU one, the alltoall over InfiniBand is
+   fine and the next lever is the deeper overlap (item 2); if the
+   alltoall dominates (NCCL handles the two nodes, but the inter-node
+   share of the transfer goes over InfiniBand at a fraction of NVLink),
+   then the y decomposition (WP6, DESIGN.md 7 (i)), the only item left
+   that has to add real structure.  Ask before starting WP6.
+2. **Deeper overlap** (the alltoalls of the first product group behind
    the products and `buildrhs` of the second; six products in memory at
    once): at most the exposed 13% of the 4-GPU step, more likely half of
    it.  Only if the two-node measurement makes the alltoall dominant
    again.
-4. **Memory per rank** at 512^3: 19.5 GB of transform buffers on one
+3. **Memory per rank** at 512^3: 19.5 GB of transform buffers on one
    rank, 4.9 GB on four; the line-solver workspace with all columns is
-   5 x 16 B x lines x ny (`line_chunk` bounds it); the transpose buffers
-   are now two pairs of one field each (two thirds of the old three-field
-   pair).
+   48 B x lines x ny (`line_chunk` bounds it); the transpose buffers
+   are two pairs of one field each.
+4. **The line solver, if ever again**: what is left is structural.  Its
+   stalls are the strided reads of the y-innermost field (one line per
+   thread, 32 sectors per warp request; the KIND_DY solve reads it five
+   times per row through its stencil, a sliding window would recover
+   about 1% of the step) and the write-through of the workspace.
+   Prefetching the next row's right-hand side or stencil coefficients
+   was measured and gained nothing (FINDINGS.md).  A coalesced layout
+   would need a gather pass (the bytes session 5 removed) or a
+   different thread mapping; neither is local.
 
 **Not doing: `buildrhs` as a stencil-and-transpose tile** (decided
 2026-09-26, the user's call: the code should stay as simple as it is).
-The notes, in case it is ever needed.  `buildrhs` is 15% of the 1-GPU
-kernel time, 2.45 ms per call at 256^3 at about half the bandwidth: its
+The notes, in case it is ever needed.  `buildrhs` is 17% of the 1-GPU
+kernel time, 2.4 ms per call at 256^3 at about half the bandwidth: its
 fifteen `VVdz` stencil reads per product are a plane apart between
 neighbouring threads (iy innermost, `VVdz` has iz innermost), so half of
 every 32-byte sector is wasted; the other loop order (iz innermost, `rhs`
@@ -138,31 +152,31 @@ part of the gain).  About 100 lines either way.  Ceiling 7% of the
 step, session 4).
 
 Things learned this session that the next one should not relearn
-(FINDINGS.md has the numbers): the cyclic solve needs no third pass
-(rows 0 and 1 of the back substitution come from a forward recurrence);
-a device routine cannot take an assumed-shape dummy for the field
-(illegal address: pass explicit shape, and make the `line_solve` dummies
-`contiguous`); a scalar `u1` clashes with an array `U1` (case); a
-target-specific `FFLAGS +=` in the Makefile works for a per-file flag;
-`-gpu=maxregcount:N` at 128 spills and loses; the cuFFT plans per field
-cost nothing; NCCL on a second stream needs `cudaStreamNonBlocking` and
-two events per buffer pair, and `MPI_Ialltoall` works on device buffers
-under `use_device_addr` if the compute stream is synchronised first.
+(FINDINGS.md has the numbers): the interior matrix of the cyclic solve
+is real (only the border carries the phase); a scalar `p1` clashes with
+an array `P1` (case-insensitive names, like `u1`/`U1` last time);
+`tests/regression.sh` used to test the exit status of `tail` instead of
+the comparison and printed REGRESSION OK on a failure (fixed: the
+`PIPESTATUS`); nvfortran unrolls a loop but does not hoist the loads of
+one iteration above the stores of the previous one, so write the loads
+of several rows first when a sweep is latency-bound; `cuobjdump
+-res-usage` shows the registers a cap leaves, not what the kernel needs
+(compile with lower caps until LOCAL becomes nonzero); a 255-block grid
+on 108 SMs cannot use occupancy, only per-thread memory parallelism.
 
 ## Opening message for the next session
 
 ```
 Repository ~/Codes/hst/homogenenousShearTurbulence (also ~/hst on HoreKA as
 an rsync copy), a GPU/CPU DNS for homogeneous shear turbulence; read
-README.md, FINDINGS.md (last two sections) and NEXT_SESSION.md.  Task:
-NEXT_SESSION.md item 1, the line solver's remaining latency by local
-edits only (measure each idea with jobs/horeka_ncu.slurm and A/B on the
-A100 with jobs/horeka_ab.slurm; stop when the kernel reaches the
-bandwidth or the edits stop being local), then item 2, the two-node
-measurement; the code must stay as simple as it is (no new kernels; the
-buildrhs tile is documented and not to be done).  tests/run_tests.sh and
-tests/regression.sh green after every step (CPU, GPU, and the NCCL build
-on istmcetus), HoreKA jobs for the numbers.  Do not modify
-~/Codes/hst/channel or ~/Codes/hst/hst-main.  Commit each step; push at
-the end.
+README.md, FINDINGS.md (last section) and NEXT_SESSION.md.  Task:
+NEXT_SESSION.md item 1, the second node: read the outputs of the two-node
+jobs (NEXT_SESSION.md says where), rebuild ~/hst from main, and decide
+between the deeper overlap and WP6 from what the alltoall costs on two
+nodes; ask before starting WP6.  The code must stay as simple as it is
+(no new kernels; the buildrhs tile is documented and not to be done; the
+line solver is finished).  tests/run_tests.sh and tests/regression.sh
+green after every step (CPU, GPU, and the NCCL build on istmcetus),
+HoreKA jobs for the numbers.  Do not modify ~/Codes/hst/channel or
+~/Codes/hst/hst-main.  Commit each step; push at the end.
 ```
