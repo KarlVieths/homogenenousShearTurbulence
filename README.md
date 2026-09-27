@@ -161,8 +161,10 @@ the A100; `timing = .true.` prints where the time goes.  Four A100 are
 the FFTs (31% of the kernel time), `buildrhs` (17%) and the line solver
 (14%, its two sweeps at two thirds of the bandwidth), on four the
 exposed part of the alltoall (about 13% of the step; the rest is hidden
-behind the transforms); a two-node measurement (`jobs/horeka_2node.slurm`) is
-queued and decides between a deeper overlap and WP6.
+behind the transforms); on two nodes (8 A100, `jobs/horeka_2node.slurm`) the
+step is 2.1-2.3x *slower* than on four GPUs of one node, because half
+of every alltoall then crosses InfiniBand, so a second node needs the y
+decomposition (WP6).
 
 ## Status
 
@@ -171,7 +173,7 @@ queued and decides between a deeper overlap and WP6.
 | numerics, GPU, pressure, CPL files, S2, Stokes layer | done and validated (FINDINGS.md) |
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
 | NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
-| y decomposition | not started (DESIGN.md 7, WP6) |
+| y decomposition | not started (DESIGN.md 7, WP6); needed for a second node (FINDINGS.md, the second node) |
 | safety net | `tests/run_tests.sh` (12 runs) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout

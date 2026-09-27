@@ -812,8 +812,41 @@ the RTX 3060 and CPU columns measured on istmio2):
 | bench_512 | 0.646 | 0.216 | | | 0.687 / 0.227 |
 
 The cards that run FP64 slowly gain the most (the real division and the
-real elimination): 14% on the RTX 3060, 21% on the CPU.  The two-node
-measurement (`jobs/horeka_2node.slurm`, handoff item 2) was submitted
-on the session-5 build and had not run when the session ended (the dev
-partition has three nodes; the copy on `accelerated` was estimated to
-start the next morning); NEXT_SESSION.md says where its output lands.
+real elimination): 14% on the RTX 3060, 21% on the CPU.
+
+## The second node (2026-09-27, session 6, handoff item 2)
+
+`jobs/horeka_2node.slurm` (new): the same decks on 4 A100 of one node
+and on 8 A100 of two nodes (hkn0424 and hkn0812, InfiniBand between
+them), NCCL transport and, for reference, MPI; the session-5 build (the
+solver difference is in the table above and does not touch the
+transposes).  Job 5164343 on `accelerated` (the dev partition has three
+nodes and never scheduled it):
+
+| deck | 4 GPUs, 1 node | 8 GPUs, 2 nodes, nccl | 8 GPUs, mpi | of the 8-GPU nccl step: to physical / products |
+| --- | --- | --- | --- | --- |
+| bench_256 | 0.0345 | 0.0740 | 0.282 | 0.0213 / 0.0443 (4 GPUs: 0.0072 / 0.0170) |
+| bench_512 | 0.2260 | 0.5208 | 2.489 | 0.1599 / 0.3333 (4 GPUs: 0.0517 / 0.1246) |
+
+**Eight GPUs on two nodes are 2.1-2.3x slower than four on one.**  The
+solve phases halve as they should (0.0083 to 0.0073 at 256^3, 0.0356 to
+0.0206 at 512^3), so the whole loss is in the two phases that hold the
+transposes: the alltoall of an x-z pencil decomposition sends 7/8 of
+every field off the rank, and half of that leaves the node.  The
+inter-node share per step at 256^3 is about 1.8 GB per node each way
+(27 field alltoalls), and the growth of the two phases, 0.041 s, puts
+the effective inter-node rate at about 45 GB/s per node: NCCL is on the
+InfiniBand (a socket fallback would be ten times slower), at roughly
+half of the node's four HDR links, and even at their full 100 GB/s the
+inter-node part alone would be 18 ms of a 34 ms step.  Deeper overlap
+cannot hide that (the transforms it would hide behind take 15 ms).
+MPI's alltoall over the two nodes is 3.8x slower still than NCCL's.
+
+Conclusion: with x-z pencils the code stops at one node, and the four
+A100 of a node are the fastest configuration for these decks.  A second
+node needs the y decomposition (WP6, DESIGN.md 7 (i)): each node keeps a
+y slab, the x-z alltoalls stay inside the node on NVLink, and only the
+line solver's border couplings and the ghost rows cross the node
+boundary, a few KB per line instead of half the field.  That is the
+only item left that adds real structure, and the next session should
+ask before starting it.

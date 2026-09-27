@@ -1,4 +1,4 @@
-# Next session: the second node
+# Next session: the y decomposition (WP6), if the user wants a second node
 
 Copy the block at the end as the opening message of the next session.
 
@@ -18,15 +18,17 @@ register-idea list of the old handoff is moot: the kernel fits in 80
 registers and lower caps gain nothing (FINDINGS.md, session 6).  Read
 `README.md`, then FINDINGS.md (the last section), then this file.
 
-Item 2, the two-node measurement, is **submitted and not yet run**: the new
-`jobs/horeka_2node.slurm` (4 A100 on one node against 8 on two, NCCL and
-MPI transport, bench_256 and bench_512 with the timer) is queued twice on
-`~/hst` (the session-5 code, the solver difference is known from the A/B
-table), as job 5164289 on `dev_accelerated` (only three nodes, no start
-estimate) and 5164343 on `accelerated` (estimated start 2026-09-27
-10:10).  Their outputs land in `~/hst/hst-2node-<jobid>.out` on HoreKA;
-read them first, then cancel the other job (`scancel`) and rebuild
-`~/hst` from `main` (not before: the queued job runs its binary).
+Item 2, the two-node measurement, is done (FINDINGS.md, last section):
+**8 A100 on two nodes are 2.1-2.3x slower than 4 on one** (bench_256
+0.074 against 0.034, bench_512 0.52 against 0.23; MPI transport 3.8x
+worse still).  The solves halve, the transposes explode: with x-z
+pencils half of every alltoall crosses InfiniBand, and even at the full
+rate of the node's links that share alone would exceed half of the
+one-node step.  Deeper overlap cannot hide it.  So the code stops at
+one node until it has the y decomposition (WP6, DESIGN.md 7 (i)), the
+only item left that adds real structure.  `~/hst` on HoreKA is rebuilt
+from this `main`; the leftover dev-partition copy of the two-node job
+was cancelled.
 
 ## Safety net, use it before and after every change
 
@@ -66,8 +68,7 @@ sbatch --ntasks-per-node=4 --gres=gpu:4 --export=ALL,NP=4 jobs/horeka_profile.sl
 sbatch --export=ALL,A_ROOT=$HOME/hst,B_ROOT=$HOME/hst-exp jobs/horeka_ab.slurm       # A/B: both builds, same node, timer + nsys
 sbatch --export=ALL,A_ROOT=$HOME/hst-exp,B_ROOT=$HOME/hst-exp2,C_ROOT=$HOME/hst-exp3 jobs/horeka_ab.slurm   # three-way
 sbatch --export=ALL,HST_ROOT=$HOME/hst-exp,KERNEL=regex:buildrhs,SKIP=6,COUNT=2 jobs/horeka_ncu.slurm   # Nsight Compute counters
-sbatch jobs/horeka_2node.slurm                                # 4 A100 on one node against 8 on two, nccl and mpi
-sbatch --partition=accelerated jobs/horeka_2node.slurm        # the same on the main partition (dev has 3 nodes)
+sbatch --partition=accelerated jobs/horeka_2node.slurm        # 4 A100 on one node against 8 on two, nccl and mpi (dev has 3 nodes: use accelerated)
 ```
 
 `dev_accelerated` runs one job per user at a time and queues at most
@@ -99,18 +100,23 @@ the two solve phases 14%; the exposed alltoall is about 13% of the step.
 
 ## What is worth doing, in order
 
-1. **The second node.**  Read the two-node outputs above.  If the 8-GPU
-   step is close to half the 4-GPU one, the alltoall over InfiniBand is
-   fine and the next lever is the deeper overlap (item 2); if the
-   alltoall dominates (NCCL handles the two nodes, but the inter-node
-   share of the transfer goes over InfiniBand at a fraction of NVLink),
-   then the y decomposition (WP6, DESIGN.md 7 (i)), the only item left
-   that has to add real structure.  Ask before starting WP6.
+1. **The y decomposition (WP6), only if the user asks for a second
+   node.**  DESIGN.md 7 (i): a 2D decomposition npx x npy with each
+   node holding one y slab (npy = number of nodes), so that the x-z
+   alltoalls stay on NVLink inside a node and only the line solver's
+   border couplings (the Schur complement of the bordering, of which
+   the present solve is the npy = 1 case: `hst_linsolve` already says
+   so) and the ghost rows cross the node boundary.  It touches the
+   decomposition (`hst_mpi`), the ghost rows (`hst_derivatives`), the
+   line solver, the I/O types and the statistics; it is the largest
+   change since the start and must be designed with the user first.
+   If the user does not need more than four A100 per run, skip it:
+   the code is done at one node.
 2. **Deeper overlap** (the alltoalls of the first product group behind
    the products and `buildrhs` of the second; six products in memory at
-   once): at most the exposed 13% of the 4-GPU step, more likely half of
-   it.  Only if the two-node measurement makes the alltoall dominant
-   again.
+   once): at most the exposed 13% of the 4-GPU step on one node, more
+   likely half of it.  Worth it only for one-node runs, and only if
+   the user wants those last percent.
 3. **Memory per rank** at 512^3: 19.5 GB of transform buffers on one
    rank, 4.9 GB on four; the line-solver workspace with all columns is
    48 B x lines x ny (`line_chunk` bounds it); the transpose buffers
@@ -170,10 +176,10 @@ on 108 SMs cannot use occupancy, only per-thread memory parallelism.
 Repository ~/Codes/hst/homogenenousShearTurbulence (also ~/hst on HoreKA as
 an rsync copy), a GPU/CPU DNS for homogeneous shear turbulence; read
 README.md, FINDINGS.md (last section) and NEXT_SESSION.md.  Task:
-NEXT_SESSION.md item 1, the second node: read the outputs of the two-node
-jobs (NEXT_SESSION.md says where), rebuild ~/hst from main, and decide
-between the deeper overlap and WP6 from what the alltoall costs on two
-nodes; ask before starting WP6.  The code must stay as simple as it is
+NEXT_SESSION.md: the two-node measurement showed that x-z pencils stop at
+one node, so the only item left is the y decomposition (WP6), which adds
+real structure; discuss with me whether to do it before touching code.
+The code must stay as simple as it is
 (no new kernels; the buildrhs tile is documented and not to be done; the
 line solver is finished).  tests/run_tests.sh and tests/regression.sh
 green after every step (CPU, GPU, and the NCCL build on istmcetus),
