@@ -59,11 +59,11 @@ contains
     eps = 0; uv = 0; uu = 0; vv = 0; ww = 0; vw = 0; uw = 0; mfx = 0; mfz = 0
     q_in = 0; q_out = 0; e_in = 0; e_out = 0
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, k2, dyl, inlayer, nx0, nxN, nz, ny) private(ix, iy, iz, w, cu, cv, cw) &
+    !$omp shared(V, k2, dyl, inlayer, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz, w, cu, cv, cw) &
     !$omp reduction(+:eps, uv, uu, vv, ww, vw, uw, mfx, mfz, q_in, q_out, e_in, e_out)
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           cu = V(iy, iz, ix, 1); cv = V(iy, iz, ix, 2); cw = V(iy, iz, ix, 3)
           if (ix == 0 .and. iz == 0) then
             mfx = mfx + dreal(cu)*dyl(iy)
@@ -94,10 +94,10 @@ contains
       call line_solve(KIND_DY, 0.0d0, V(:, :, :, c), rhs(:, :, :, 1))
       grad = 0; g_in = 0; g_out = 0
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(rhs, dyl, inlayer, nx0, nxN, nz, ny) private(ix, iy, iz, w, dq) reduction(+:grad, g_in, g_out)
+      !$omp shared(rhs, dyl, inlayer, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz, w, dq) reduction(+:grad, g_in, g_out)
       do ix = nx0, nxN
         do iz = -nz, nz
-          do iy = 0, ny - 1
+          do iy = ny0, nyN
             if (ix == 0 .and. iz == 0) cycle
             w = 2.0d0*dyl(iy)
             if (ix == 0) w = dyl(iy)

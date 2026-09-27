@@ -105,7 +105,7 @@ contains
       w = 2.0d0
       if (ix == 0) w = 1.0d0
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           do c = 1, 3
             s = s + w*abs(V(iy, iz, ix, c))**2
           end do

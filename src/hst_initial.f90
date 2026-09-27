@@ -9,7 +9,8 @@
 !
 ! The random numbers are keyed on the mode indices (uniform_from_key, from
 ! channel/src/physics/initial_condition.f90), so the field is a pure
-! function of the deck: the same at any rank count.  The ix = 0 plane is
+! function of the deck: the same at any rank count and decomposition (each
+! rank fills its rows ny0-2..nyN+2 by their global index).  The ix = 0 plane is
 ! made Hermitian so that the physical field is real.  The (0,0) mode (mean
 ! profiles) is left zero, as in the CPL code: the mean flow is S*y alone.
 module hst_initial
@@ -50,7 +51,7 @@ contains
           u(1) = I*(ky*a(3) - kz*a(2))
           u(2) = I*(kz*a(1) - kx*a(3))
           u(3) = I*(kx*a(2) - ky*a(1))
-          do iy = -2, ny + 1
+          do iy = ny0 - 2, nyN + 2
             ph = exp(I*ky*y(iy))
             V(iy, iz, ix, 1) = V(iy, iz, ix, 1) + u(1)*ph
             V(iy, iz, ix, 2) = V(iy, iz, ix, 2) + u(2)*ph

@@ -43,7 +43,7 @@ program test_forcing
 
   k = mx*alfa0; ky = k
   V = 0
-  do iy = -2, ny + 1
+  do iy = ny0 - 2, nyN + 2
     V(iy, 0, 0, 1) = sin(ky*y(iy))            ! u mean profile
     V(iy, 0, mx, 3) = -0.5d0*I                ! w = sin(kx)
   end do
@@ -57,7 +57,7 @@ program test_forcing
   !$omp target update from(V)
 
   err = 0.0d0; errv = 0.0d0; ref = 0.0d0
-  do iy = 0, ny - 1
+  do iy = ny0, nyN
     eta1 = ibeta(0)*V(iy, 0, mx, 1) - ialfa(mx)*V(iy, 0, mx, 3)
     expected = eta0 + I*k*k*deltat/2.0d0*sin(ky*y(iy))
     err = max(err, abs(eta1 - expected))

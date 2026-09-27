@@ -16,14 +16,14 @@ program test_linsolve
   use hst_params
   use test_common
   use hst_linsolve
-  use hst_derivatives, only: shear_shifts, fill_ghosts
+  use hst_derivatives, only: shear_shifts, fill_ghosts, fill_ghosts_field
   use hst_initial, only: uniform_from_key
 
   implicit none
 
   integer :: ierr, ix, iy, iz, j, kind
   real(C_DOUBLE) :: lambda, kk, c, err, ref, worst, err_g, ref_g, sx, sz
-  complex(C_DOUBLE_COMPLEX) :: acc, ph
+  complex(C_DOUBLE_COMPLEX) :: acc
   character(len=8), parameter :: name(5) = ['D2V     ', 'ETA     ', 'POISSON ', 'D0      ', 'DY      ']
 
   call test_start()
@@ -37,7 +37,7 @@ program test_linsolve
   do ix = nx0, nxN
     do iz = -nz, nz
       if (ix == 0 .and. iz == 0) cycle
-      do iy = 0, ny - 1
+      do iy = ny0, nyN
         V(iy, iz, ix, 1) = dcmplx(uniform_from_key(3, 1, iy, iz, ix) - 0.5d0, uniform_from_key(4, 1, iy, iz, ix) - 0.5d0)
       end do
     end do
@@ -53,7 +53,7 @@ program test_linsolve
     do ix = nx0, nxN
       do iz = -nz, nz
         kk = k2(iz, ix)
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           acc = 0.0d0
           do j = -2, 2
             select case (kind)
@@ -77,19 +77,17 @@ program test_linsolve
     !$omp target update to(rhs)
     if (kind == KIND_DY) then
       call line_solve(kind, lambda, V(:, :, :, 1), rhs(:, :, :, 2))
+      call fill_ghosts_field(rhs(:, :, :, 2), sx, sz)    ! the check below runs the stencil through the ghost rows
     else
       call line_solve(kind, lambda, rhs(:, :, :, 1), rhs(:, :, :, 2))
     end if
     !$omp target update from(rhs)
     err = 0.0d0; ref = 0.0d0
     if (kind == KIND_DY) then
-      ! D0 dst must equal D1 src: fill the ghost rows of dst on the host
+      ! D0 dst must equal D1 src
       do ix = nx0, nxN
         do iz = -nz, nz
-          ph = exp(dcmplx(0.0d0, -(alfa0*ix*sx + beta0*iz*sz)))
-          rhs(ny, iz, ix, 2) = rhs(0, iz, ix, 2)*ph; rhs(ny + 1, iz, ix, 2) = rhs(1, iz, ix, 2)*ph
-          rhs(-1, iz, ix, 2) = rhs(ny - 1, iz, ix, 2)*conjg(ph); rhs(-2, iz, ix, 2) = rhs(ny - 2, iz, ix, 2)*conjg(ph)
-          do iy = 0, ny - 1
+          do iy = ny0, nyN
             acc = 0.0d0
             do j = -2, 2
               acc = acc + der(iy, 0, j)*rhs(iy + j, iz, ix, 2) - der(iy, 1, j)*V(iy + j, iz, ix, 1)
@@ -100,8 +98,8 @@ program test_linsolve
         end do
       end do
     else
-      err = maxval(abs(rhs(0:ny - 1, :, :, 2) - V(0:ny - 1, :, :, 1)))
-      ref = maxval(abs(V(0:ny - 1, :, :, 1)))
+      err = maxval(abs(rhs(ny0:nyN, :, :, 2) - V(ny0:nyN, :, :, 1)))
+      ref = maxval(abs(V(ny0:nyN, :, :, 1)))
     end if
     call MPI_Allreduce(err, err_g, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
     call MPI_Allreduce(ref, ref_g, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)

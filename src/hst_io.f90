@@ -25,14 +25,17 @@
 ! Pressure (p_fields/pField<n>.fld): the same array without header and with
 ! one component, as prepare_pressure.cpl writes it.
 !
-! Written and read collectively with MPI-IO: each rank repacks its x slab
-! into the CPL index order and writes it through a subarray view.
+! Written and read collectively with MPI-IO: each rank repacks the rows
+! ny0..nyN of its x slab into the CPL index order and writes them through
+! a subarray view of the file (cpl_view); the file's four ghost rows are
+! written by the ranks that own the rows they copy, in two more collective
+! writes.  Reading takes the interior rows; the ghost rows are refilled by
+! fill_ghosts.
 module hst_io
 
   use, intrinsic :: iso_c_binding
   use mpi_f08
   use hst_params
-  use hst_mpi, only: cpl_view_type, cpl_pview_type
   use hst_initial, only: generate_initial_field
   use hst_derivatives, only: s2_of, gamma_y_of
 
@@ -62,6 +65,7 @@ contains
     real(C_DOUBLE) :: r_alfa0, r_beta0, r_re, r_time, r_S
     integer(MPI_OFFSET_KIND) :: disp
     type(MPI_File) :: fh
+    type(MPI_Datatype) :: view
     complex(C_DOUBLE_COMPLEX), allocatable :: buf(:, :, :, :)
     integer(C_INT) :: ix, iy, iz
 
@@ -103,14 +107,16 @@ contains
       print *, '   note: Re or S differ from the file (', r_re, r_S, ')'
     if (time_from_restart) time = r_time
 
-    allocate (buf(3, ny0 - 2:nyN + 2, -nz:nz, nx0:nxN))
+    allocate (buf(3, ny0:nyN, -nz:nz, nx0:nxN))
+    view = cpl_view(3, ny0, nyN)
     call MPI_File_open(MPI_COMM_WORLD, trim(filename), MPI_MODE_RDONLY, MPI_INFO_NULL, fh, ierr)
-    call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, cpl_view_type, 'native', MPI_INFO_NULL, ierr)
+    call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, view, 'native', MPI_INFO_NULL, ierr)
     call MPI_File_read_all(fh, buf, size(buf), MPI_DOUBLE_COMPLEX, MPI_STATUS_IGNORE, ierr)
     call MPI_File_close(fh, ierr)
+    call MPI_Type_free(view, ierr)
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           V(iy, iz, ix, CPL_ORDER) = buf(:, iy, iz, ix)
         end do
       end do
@@ -155,16 +161,16 @@ contains
              'meanpx=0 '//TAB//'meanflowx=0 '//TAB//'meanpy=0 '//TAB//'meanflowy=0'//LF// &
              'time='//LF//raw8(time)//LF//'S='//LF//raw8(S)//LF//'S2='//LF//raw8(s2_of(time))//LF// &
              'gamma_x='//LF//raw8(S*time)//LF//'gamma_y='//LF//raw8(gamma_y_of(time))//LF//'Vfield='//LF
-    ! this rank's slab in CPL order, with periodic ghost rows
-    allocate (buf(3, ny0 - 2:nyN + 2, -nz:nz, nx0:nxN))
+    ! this rank's rows in CPL order
+    allocate (buf(3, ny0:nyN, -nz:nz, nx0:nxN))
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = -2, ny + 1
-          buf(:, iy, iz, ix) = V(modulo(iy, ny), iz, ix, CPL_ORDER)
+        do iy = ny0, nyN
+          buf(:, iy, iz, ix) = V(iy, iz, ix, CPL_ORDER)
         end do
       end do
     end do
-    call write_cpl(filename, head, buf, size(buf), cpl_view_type)
+    call write_cpl(filename, head, buf, 3)
     deallocate (buf)
   end subroutine restart_write
 
@@ -173,28 +179,30 @@ contains
   subroutine field_write(filename, field)
     character(len=*), intent(in) :: filename
     complex(C_DOUBLE_COMPLEX), intent(in) :: field(ny0 - 2:, -nz:, nx0:)
-    complex(C_DOUBLE_COMPLEX), allocatable :: buf(:, :, :)
+    complex(C_DOUBLE_COMPLEX), allocatable :: buf(:, :, :, :)
     integer(C_INT) :: ix, iy, iz
 
-    allocate (buf(ny0 - 2:nyN + 2, -nz:nz, nx0:nxN))
+    allocate (buf(1, ny0:nyN, -nz:nz, nx0:nxN))
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = -2, ny + 1
-          buf(iy, iz, ix) = field(modulo(iy, ny), iz, ix)
+        do iy = ny0, nyN
+          buf(1, iy, iz, ix) = field(iy, iz, ix)
         end do
       end do
     end do
-    call write_cpl(filename, '', buf, size(buf), cpl_pview_type)
+    call write_cpl(filename, '', buf, 1)
     deallocate (buf)
   end subroutine field_write
 
   ! Creates filename, writes the header (built on the terminal rank; empty
-  ! for none) and then the n values of buf collectively through view.
-  subroutine write_cpl(filename, head, buf, n, view)
+  ! for none) and then buf, this rank's rows in CPL order with ncomp
+  ! components: the interior rows, then the file's ghost rows ny, ny+1
+  ! (copies of the rows 0, 1) and -2, -1 (copies of ny-2, ny-1) from the
+  ! ranks that own those rows.
+  subroutine write_cpl(filename, head, buf, ncomp)
     character(len=*), intent(in) :: filename, head
-    complex(C_DOUBLE_COMPLEX), intent(in) :: buf(*)
-    integer, intent(in) :: n
-    type(MPI_Datatype), intent(in) :: view
+    integer, intent(in) :: ncomp
+    complex(C_DOUBLE_COMPLEX), intent(in) :: buf(ncomp, ny0:nyN, -nz:nz, nx0:nxN)
     type(MPI_File) :: fh
     type(MPI_Status) :: status
     integer :: ierr, hlen
@@ -206,10 +214,52 @@ contains
     call MPI_File_open(MPI_COMM_WORLD, trim(filename), ior(MPI_MODE_WRONLY, MPI_MODE_CREATE), MPI_INFO_NULL, fh, ierr)
     call MPI_File_set_size(fh, 0_MPI_OFFSET_KIND, ierr)
     if (has_terminal .and. hlen > 0) call MPI_File_write(fh, head, hlen, MPI_CHARACTER, status, ierr)
-    call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, view, 'native', MPI_INFO_NULL, ierr)
-    call MPI_File_write_all(fh, buf, n, MPI_DOUBLE_COMPLEX, status, ierr)
+    call write_rows(fh, disp, buf, ncomp, ny0, nyN, ny0, .true.)
+    call write_rows(fh, disp, buf, ncomp, 0, 1, ny, ny0 == 0)
+    call write_rows(fh, disp, buf, ncomp, ny - 2, ny - 1, -2, nyN == ny - 1)
     call MPI_File_close(fh, ierr)
   end subroutine write_cpl
+
+  ! Collective write of the rows b0..b1 of buf to the file rows f0.. (CPL
+  ! row index -2..ny+1); a rank with nothing to write (active false) takes
+  ! part with an empty write.
+  subroutine write_rows(fh, disp, buf, ncomp, b0, b1, f0, active)
+    type(MPI_File), intent(in) :: fh
+    integer(MPI_OFFSET_KIND), intent(in) :: disp
+    integer, intent(in) :: ncomp, b0, b1, f0
+    complex(C_DOUBLE_COMPLEX), intent(in) :: buf(ncomp, ny0:nyN, -nz:nz, nx0:nxN)
+    logical, intent(in) :: active
+    type(MPI_Datatype) :: filetype, memtype
+    type(MPI_Status) :: status
+    integer :: ierr
+
+    if (.not. active) then
+      call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, MPI_DOUBLE_COMPLEX, 'native', MPI_INFO_NULL, ierr)
+      call MPI_File_write_all(fh, buf, 0, MPI_DOUBLE_COMPLEX, status, ierr)
+      return
+    end if
+    filetype = cpl_view(ncomp, f0, f0 + b1 - b0)
+    call MPI_Type_create_subarray(4, [ncomp, nyB, 2*nz + 1, nxB], [ncomp, b1 - b0 + 1, 2*nz + 1, nxB], &
+                                  [0, b0 - ny0, 0, 0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, memtype, ierr)
+    call MPI_Type_commit(memtype, ierr)
+    call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, filetype, 'native', MPI_INFO_NULL, ierr)
+    call MPI_File_write_all(fh, buf, 1, memtype, status, ierr)
+    call MPI_Type_free(memtype, ierr)
+    call MPI_Type_free(filetype, ierr)
+  end subroutine write_rows
+
+  ! MPI-IO view of the file rows r0..r1 (CPL row index -2..ny+1) of this
+  ! rank's x slab: the file array is (ncomp, ny+4, 2nz+1, nx+1) in Fortran
+  ! order (ncomp = 3 for the velocity, 1 for the pressure).  Committed; the
+  ! caller frees it.
+  function cpl_view(ncomp, r0, r1) result(view)
+    integer, intent(in) :: ncomp, r0, r1
+    type(MPI_Datatype) :: view
+    integer :: ierr
+    call MPI_Type_create_subarray(4, [ncomp, ny + 4, 2*nz + 1, nx + 1], [ncomp, r1 - r0 + 1, 2*nz + 1, nxB], &
+                                  [0, r0 + 2, 0, nx0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, view, ierr)
+    call MPI_Type_commit(view, ierr)
+  end function cpl_view
 
   function str_i(i) result(s)
     integer(C_INT), intent(in) :: i

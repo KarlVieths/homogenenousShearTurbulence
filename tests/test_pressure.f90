@@ -45,7 +45,7 @@ program test_pressure
   k = mx*alfa0; ky = k
   V = 0
   if (nx0 <= mx .and. mx <= nxN) then
-    do iy = -2, ny + 1
+    do iy = ny0 - 2, nyN + 2
       V(iy, 0, mx, 1) = 0.5d0*sin(ky*y(iy))
       V(iy, 0, mx, 2) = 0.5d0*I*cos(ky*y(iy))
     end do
@@ -61,7 +61,7 @@ program test_pressure
   err = 0; err_other = 0
   do ix = nx0, nxN
     do iz = -nz, nz
-      do iy = 0, ny - 1
+      do iy = ny0, nyN
         if (ix == 2*mx .and. iz == 0) then
           err = max(err, abs(rhs(iy, iz, ix, 2) - dcmplx(-0.125d0, 0.0d0)))
         else if (ix == 0 .and. iz == 0) then

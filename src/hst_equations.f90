@@ -92,11 +92,11 @@ contains
     s2now = s2_of(time)
     call stokes_force(time)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, rhs, oldrhs, der, k2, ialfa, ibeta, ni, S, s2now, fy, deltat, ODE, nx0, nxN, nz, ny) &
+    !$omp shared(V, rhs, oldrhs, der, k2, ialfa, ibeta, ni, S, s2now, fy, deltat, ODE, nx0, nxN, nz, ny0, nyN) &
     !$omp private(ix, iy, iz, j, unkn, impl, expl, f, helm, biharm, force)
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           ! v equation
           unkn = 0.0d0; impl = 0.0d0
           do j = -2, 2
@@ -150,11 +150,11 @@ contains
     ! Reynolds-stress divergence (bf_dvw of hst-main): the profile stays W
     no_mean_vw = (stokes_active() .and. sl_bodyforce)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(rhs, oldrhs, VVdz, der, izd, k2, ialfa, ibeta, ODE, g, nx0, nxN, nz, ny, no_mean_vw) &
+    !$omp shared(rhs, oldrhs, VVdz, der, izd, k2, ialfa, ibeta, ODE, g, nx0, nxN, nz, ny0, nyN, no_mean_vw) &
     !$omp private(ix, iy, iz, j, p, m, d0, d1, d2, rhsu, rhsw, expl, e, r1, r2, o1, o2)
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           r1 = rhs(iy, iz, ix, 1); r2 = rhs(iy, iz, ix, 2)
           o1 = oldrhs(iy, iz, ix, 1); o2 = oldrhs(iy, iz, ix, 2)
           do p = 1, 3
@@ -234,10 +234,10 @@ contains
     ! (no default(none) here and in shift_unweighted: nvfortran 25.9 rejects
     !  the grid array y in a shared clause, although it accepts it elsewhere)
     !$omp target teams distribute parallel do collapse(3) &
-    !$omp shared(rhs, oldrhs, y, alfa0, beta0, dgx, dgz, nx0, nxN, nz, ny) private(ix, iy, iz, f)
+    !$omp shared(rhs, oldrhs, y, alfa0, beta0, dgx, dgz, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz, f)
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           f = exp(dcmplx(0.0d0, -(alfa0*ix*dgx + beta0*iz*dgz)*y(iy)))
           rhs(iy, iz, ix, 1) = rhs(iy, iz, ix, 1)*f
           rhs(iy, iz, ix, 2) = rhs(iy, iz, ix, 2)*f
@@ -259,20 +259,20 @@ contains
 
     call line_solve(KIND_D0, 0.0d0, q, V(:, :, :, 1), sx0, sz0)
     !$omp target teams distribute parallel do collapse(3) &
-    !$omp shared(V, y, alfa0, beta0, dgx, dgz, nx0, nxN, nz, ny) private(ix, iy, iz)
+    !$omp shared(V, y, alfa0, beta0, dgx, dgz, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz)
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           V(iy, iz, ix, 1) = V(iy, iz, ix, 1)*exp(dcmplx(0.0d0, -(alfa0*ix*dgx + beta0*iz*dgz)*y(iy)))
         end do
       end do
     end do
     call fill_ghosts_field(V(:, :, :, 1), sx1, sz1)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, q, der, nx0, nxN, nz, ny) private(ix, iy, iz, j, acc)
+    !$omp shared(V, q, der, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz, j, acc)
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           acc = 0.0d0
           do j = -2, 2
             acc = acc + der(iy, 0, j)*V(iy + j, iz, ix, 1)
@@ -297,10 +297,10 @@ contains
     call fill_ghosts(2)
     call line_solve(KIND_DY, 0.0d0, V(:, :, :, 2), V(:, :, :, 3))     ! V(:, :, :, 3) = dv/dy
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, k2, ialfa, ibeta, nx0, nxN, nz, ny) private(ix, iy, iz, temp)
+    !$omp shared(V, k2, ialfa, ibeta, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz, temp)
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           if (ix == 0 .and. iz == 0) then
             temp = V(iy, iz, ix, 1)
             V(iy, iz, ix, 1) = dcmplx(dreal(temp), 0.0d0)

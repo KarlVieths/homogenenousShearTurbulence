@@ -54,14 +54,14 @@ program test_taylorgreen
     V = 0
     if (orient == 1) then          ! cos(kx) sin(ky), -sin(kx) cos(ky): mode ix = mx, iz = 0
       if (nx0 <= mx .and. mx <= nxN) then
-        do iy = -2, ny + 1
+        do iy = ny0 - 2, nyN + 2
           V(iy, 0, mx, 1) = 0.5d0*sin(ky*y(iy))
           V(iy, 0, mx, 2) = 0.5d0*I*cos(ky*y(iy))
         end do
       end if
     else                           ! cos(kz) sin(ky), -sin(kz) cos(ky): modes ix = 0, iz = +-mz
       if (nx0 == 0) then
-        do iy = -2, ny + 1
+        do iy = ny0 - 2, nyN + 2
           V(iy, mz, 0, 3) = 0.5d0*sin(ky*y(iy));   V(iy, -mz, 0, 3) = 0.5d0*sin(ky*y(iy))
           V(iy, mz, 0, 2) = 0.5d0*I*cos(ky*y(iy)); V(iy, -mz, 0, 2) = -0.5d0*I*cos(ky*y(iy))
         end do
@@ -80,7 +80,7 @@ program test_taylorgreen
     err = 0.0d0
     do ix = nx0, nxN
       do iz = -nz, nz
-        do iy = 0, ny - 1
+        do iy = ny0, nyN
           do m = 1, 3
             ex = 0.0d0
             if (orient == 1 .and. ix == mx .and. iz == 0) then

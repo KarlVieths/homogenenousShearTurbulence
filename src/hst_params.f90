@@ -25,6 +25,7 @@ module hst_params
   real(C_DOUBLE), save :: lx, ly, lz          ! box; ly is an input, lx, lz derived
   real(C_DOUBLE), save :: ystretch            ! tanh clustering of y at mid-box (0 = uniform)
   integer(C_INT), save :: line_chunk          ! x columns per line-solver batch (0 = default, hst_linsolve)
+  ! npy is read with the mesh (the number of y slabs), see the rank layout below
   character(len=8), save :: transport         ! alltoall transport: 'auto', 'mpi' or 'nccl' (hst_mpi)
   !$omp declare target(ny)
 
@@ -54,11 +55,15 @@ module hst_params
   integer(C_INT), save :: seed
 
   !-------------------------------------------------------- rank layout ----
-  ! nproc ranks form a 1-D x-z pencil decomposition (npxz = nproc, npy = 1).
-  ! The y range ny0:nyN is kept as in the channel code so that a y
-  ! decomposition can be added later; today ny0 = 0 and nyN = ny-1.
-  integer(C_INT), save :: nproc, iproc, npxz, ipxz
-  integer(C_INT), save :: nx0, nxN, nxB, nz0, nzN, nzB, ny0, nyN
+  ! nproc = npxz*npy ranks: npxz x-z pencils (ipxz) times npy y slabs
+  ! (ipy).  A rank owns the x modes nx0:nxN in spectral space, the z lines
+  ! nz0:nzN in physical space and the y rows ny0:nyN (nyB = ny/npy of
+  ! them; plus two ghost rows on each side in every field).  Every loop
+  ! over y in the physics runs ny0:nyN; only hst_mpi, hst_linsolve and
+  ! hst_io know how the slabs talk to each other (DESIGN.md 7 (i)).  This
+  ! version has npy = 1: every rank owns all of y.
+  integer(C_INT), save :: nproc, iproc, npxz, ipxz, npy, ipy
+  integer(C_INT), save :: nx0, nxN, nxB, nz0, nzN, nzB, ny0, nyN, nyB
   logical, save :: has_terminal, has_average
   !$omp declare target(nx0, nxN, nxB, nz0, nzN, nzB, ny0, nyN)
 

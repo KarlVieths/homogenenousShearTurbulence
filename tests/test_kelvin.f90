@@ -58,7 +58,7 @@ program test_kelvin
   u0 = (I*kx*(I*ky0*v0) - I*kz*eta0)/kh2
   w0 = (I*kz*(I*ky0*v0) + I*kx*eta0)/kh2
   V = 0
-  do iy = -2, ny + 1
+  do iy = ny0 - 2, nyN + 2
     ph = exp(I*ky0*y(iy))
     V(iy, iz, ix, 1) = u0*ph
     V(iy, iz, ix, 2) = v0*ph
@@ -99,7 +99,7 @@ program test_kelvin
     etaex = (eta0 + (s2c*I*kx - S*I*kz)*v0*time)*visc
   end if
   err_v = 0; err_eta = 0
-  do iy = 0, ny - 1
+  do iy = ny0, nyN
     ph = exp(I*kyt*y(iy))
     err_v = max(err_v, abs(V(iy, iz, ix, 2) - vex*ph))
     err_eta = max(err_eta, abs(I*kz*V(iy, iz, ix, 1) - I*kx*V(iy, iz, ix, 3) - etaex*ph))

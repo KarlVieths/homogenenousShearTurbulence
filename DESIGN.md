@@ -466,6 +466,38 @@ that reversing it is an addition, not a rewrite.
   alltoall becomes the bottleneck at high GPU counts.  What is kept now so
   that WP6 is an addition: the `ny0:nyN` slab indexing in every array and
   kernel bound, and one line-solve entry point.
+  *Decided (2026-09-27, after the two-node measurement in FINDINGS.md):*
+  the y decomposition lives on the branch `multinode-y`; `main` stays
+  `npy = 1`.  All fluid dynamics goes to `main` and reaches the branch by
+  `git merge main`, never the other way, and the two may differ only in
+  `hst_mpi.f90`, `hst_linsolve.f90` and `hst_io.f90` (`git diff main
+  multinode-y --stat` after every merge).  For that, every physics file
+  follows this **contract**, which makes it correct for any `npy`:
+  1. A loop over y runs `ny0, nyN`, never `0, ny - 1`; a stencil along y
+     reads the rows `iy + j`, `j = -2..2`, i.e. at most the two ghost rows
+     on each side, and nothing further away.
+  2. Ghost rows are filled only through `fill_ghosts` /
+     `fill_ghosts_field` (`hst_derivatives`), which call the one routine
+     `exchange_ghost_rows(field, shift_x, shift_z)` of `hst_mpi`; on
+     `main` that routine is the shear-periodic wrap of the single slab.
+  3. A box integral is a partial sum over the rank's rows followed by an
+     `MPI_Allreduce` over `MPI_COMM_WORLD` in which a rank without a share
+     contributes zero (`hst_stats`, the pressure mean in `hst_pressure`).
+  4. A row with special treatment (the Stokes rows `0` and `ny - 1`,
+     `hst_stokes`) is touched only if `ny0 <= iy <= nyN`.
+  5. Anything else along y goes through `line_solve` (one entry point,
+     one signature, on both branches).
+  6. The global y arrays (`y`, `dyl`, `fy`, `inlayer`, `der`) stay global,
+     indexed by the global row: they are small and every rank has them.
+  7. The initial field is seeded by global indices and each rank fills
+     its rows `ny0-2..nyN+2`, so any decomposition starts from the same
+     field; the file I/O (`hst_io`) writes the rows a rank owns through a
+     row-range view and the file's ghost rows from the ranks that own
+     their sources.
+  With that, `npy = 1` on the branch gives the results of `main` and
+  `npy > 1` must reproduce `tests/reference/*.fld` at 1e-10.  The
+  refactor of `main` to this contract (phase 0 of the handout) was
+  bit-identical on the three regression decks, CPU and GPU.
 - **(ii) NCCL: MPI first, optional backend later.**  NCCL is only a transport
   for the alltoall (and the y pipeline).  CUDA-aware MPI (HPC-X on HoreKA,
   NVHPC's OpenMPI on the ISTM boxes) already does GPU-direct alltoall.  NCCL

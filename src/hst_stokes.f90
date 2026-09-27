@@ -109,16 +109,17 @@ contains
   end subroutine stokes_force
 
   ! Prescribes the mean spanwise profile (the (0,0) mode of w, real) on the
-  ! rank that owns it: everywhere without the body force or during the first
-  ! two periods, and on the two rows next to the box edge always.  Leaves
-  ! the device copy of that mode updated; the caller refills the ghosts.
+  ! ranks that own it, over their rows: everywhere without the body force
+  ! or during the first two periods, and on the two rows next to the box
+  ! edge always.  Leaves the device copy of that mode updated; the caller
+  ! refills the ghosts.
   subroutine stokes_apply()
     integer(C_INT) :: iy
     logical :: whole
     if (.not. stokes_active() .or. .not. has_average) return
     whole = (.not. sl_bodyforce) .or. (time - sl_start <= N_PERIODS*sl_period)
     !$omp target update from(V(:, 0, 0, 3))
-    do iy = 0, ny - 1
+    do iy = ny0, nyN
       if (whole .or. iy == 0 .or. iy == ny - 1) V(iy, 0, 0, 3) = dcmplx(stokes_profile(y(iy), time), 0.0d0)
     end do
     !$omp target update to(V(:, 0, 0, 3))

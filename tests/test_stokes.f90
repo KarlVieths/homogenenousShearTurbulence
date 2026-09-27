@@ -52,7 +52,7 @@ program test_stokes
 
   err = 0; wmax = 0; other = 0
   if (has_average) then
-    do iy = 0, ny - 1
+    do iy = ny0, nyN
       wex = stokes_profile(y(iy), time)
       err = max(err, abs(V(iy, 0, 0, 3) - wex))
       wmax = max(wmax, abs(wex))
@@ -60,7 +60,7 @@ program test_stokes
     end do
     V(:, 0, 0, 3) = 0
   end if
-  other = max(other, maxval(abs(V(0:ny - 1, :, :, :))))
+  other = max(other, maxval(abs(V(ny0:nyN, :, :, :))))
   call MPI_Allreduce(err, err_g, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_Allreduce(other, other_g, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   call MPI_Allreduce(wmax, wmax_g, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)

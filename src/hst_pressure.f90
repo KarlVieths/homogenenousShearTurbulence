@@ -36,7 +36,7 @@ contains
     complex(C_DOUBLE_COMPLEX), intent(inout) :: p(ny0 - 2:, -nz:, nx0:)
     integer(C_INT) :: g, ip, m, ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: d0, d1, d2, term
-    real(C_DOUBLE) :: pmean, pmean_global, s2now
+    real(C_DOUBLE) :: pmean, s2now
     integer :: ierr
 
     s2now = s2_of(time)
@@ -45,11 +45,11 @@ contains
       call build_products(g)
       call products_to_spectral()
       !$omp target teams distribute parallel do collapse(3) default(none) &
-      !$omp shared(rhs, VVdz, V, der, izd, ialfa, ibeta, S, s2now, g, nx0, nxN, nz, ny) &
+      !$omp shared(rhs, VVdz, V, der, izd, ialfa, ibeta, S, s2now, g, nx0, nxN, nz, ny0, nyN) &
       !$omp private(ix, iy, iz, j, ip, m, d0, d1, d2, term)
       do ix = nx0, nxN
         do iz = -nz, nz
-          do iy = 0, ny - 1
+          do iy = ny0, nyN
             do ip = 1, 3
               m = 3*(g - 1) + ip
               d0 = 0.0d0; d1 = 0.0d0; d2 = 0.0d0
@@ -90,17 +90,22 @@ contains
       end do
     end do
     call line_solve(KIND_POISSON, 0.0d0, rhs(:, :, :, 1), p)
-    ! the singular (0,0) mode: the profile -<vv> itself, with zero mean
+    ! the singular (0,0) mode: the profile -<vv> itself, with zero mean (a
+    ! partial sum over this rank's rows, reduced over all ranks; a rank
+    ! without the mode contributes zero)
     pmean = 0.0d0
     if (has_average) then
-      !$omp target teams distribute parallel do default(none) shared(p, rhs, dyl, ny) private(iy) reduction(+:pmean)
-      do iy = 0, ny - 1
+      !$omp target teams distribute parallel do default(none) shared(p, rhs, dyl, ny0, nyN) private(iy) reduction(+:pmean)
+      do iy = ny0, nyN
         p(iy, 0, 0) = rhs(iy, 0, 0, 1)
         pmean = pmean + dreal(p(iy, 0, 0))*dyl(iy)
       end do
-      pmean = pmean/ly
-      !$omp target teams distribute parallel do default(none) shared(p, ny, pmean) private(iy)
-      do iy = 0, ny - 1
+    end if
+    call MPI_Allreduce(MPI_IN_PLACE, pmean, 1, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+    pmean = pmean/ly
+    if (has_average) then
+      !$omp target teams distribute parallel do default(none) shared(p, ny0, nyN, pmean) private(iy)
+      do iy = ny0, nyN
         p(iy, 0, 0) = dcmplx(dreal(p(iy, 0, 0)) - pmean, 0.0d0)
       end do
     end if

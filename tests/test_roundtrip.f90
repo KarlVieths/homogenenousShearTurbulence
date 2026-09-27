@@ -22,6 +22,7 @@ program test_roundtrip
   use hst_transforms
   use hst_initial
   use hst_io
+  use hst_derivatives, only: fill_ghosts
 
   implicit none
 
@@ -30,16 +31,19 @@ program test_roundtrip
   real(C_DOUBLE) :: err, err_global, vmax, tol, worst
 
   call test_start()
+  time = 0.0d0
   call test_setup()
 
   ! A random field with plain periodic ghost rows (gamma = 0 at time zero).
   call generate_initial_field()
-  V(-2:-1, :, :, :) = V(ny - 2:ny - 1, :, :, :)
-  V(ny:ny + 1, :, :, :) = V(0:1, :, :, :)
+  !$omp target update to(V)
+  do m = 1, 3
+    call fill_ghosts(m)
+  end do
+  !$omp target update from(V)
   allocate (V0, source=V)
   allocate (W(ny0 - 2:nyN + 2, -nz:nz, nx0:nxN)); W = 0
   !$omp target enter data map(to: W)
-  !$omp target update to(V)
   vmax = maxval(abs(V0))
   call MPI_Allreduce(MPI_IN_PLACE, vmax, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   tol = 1.0d-12*vmax
@@ -76,7 +80,7 @@ program test_roundtrip
   call restart_write('test_roundtrip.field')
   V = 0
   call restart_read('test_roundtrip.field')
-  err = maxval(abs(V(0:ny - 1, :, :, :) - V0(0:ny - 1, :, :, :)))
+  err = maxval(abs(V(ny0:nyN, :, :, :) - V0(ny0:nyN, :, :, :)))
   call MPI_Allreduce(err, err_global, 1, MPI_DOUBLE_PRECISION, MPI_MAX, MPI_COMM_WORLD, ierr)
   worst = max(worst, err_global)
   if (has_terminal) write (*, '(A,ES10.2)') '   restart write/read: max error ', err_global

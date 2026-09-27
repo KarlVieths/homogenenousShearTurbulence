@@ -97,8 +97,8 @@ $(BUILD)/hst_setup.o:      $(BUILD)/hst_params.o
 $(BUILD)/hst_timer.o:      $(BUILD)/hst_params.o $(BUILD)/hst_fft.o
 $(BUILD)/hst_transforms.o: $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_fft.o $(BUILD)/hst_timer.o
 $(BUILD)/hst_initial.o:    $(BUILD)/hst_params.o
-$(BUILD)/hst_io.o:         $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o $(BUILD)/hst_initial.o $(BUILD)/hst_derivatives.o
-$(BUILD)/hst_derivatives.o: $(BUILD)/hst_params.o
+$(BUILD)/hst_io.o:         $(BUILD)/hst_params.o $(BUILD)/hst_initial.o $(BUILD)/hst_derivatives.o
+$(BUILD)/hst_derivatives.o: $(BUILD)/hst_params.o $(BUILD)/hst_mpi.o
 $(BUILD)/hst_linsolve.o:   $(BUILD)/hst_params.o $(BUILD)/hst_derivatives.o
 # The line-solver kernel is capped at 168 registers per thread (three
 # blocks of 128 threads per SM on the A100).  With the real factor it

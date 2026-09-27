@@ -12,7 +12,9 @@
 !   f(x, y + ly) = f(x - S t ly, y)   ->   f_hat(ny) = f_hat(0) * exp(-i kx S t ly)
 ! so the two rows above the box are the two lowest rows times that phase and
 ! the two rows below are the two highest rows times its conjugate.  With the
-! images in place every stencil in the code is a plain five-point sum.
+! images in place every stencil in the code is a plain five-point sum.  The
+! rows come from the neighbouring y slabs (exchange_ghost_rows, hst_mpi);
+! with one slab they are the rows of the rank itself.
 module hst_derivatives
 
   use, intrinsic :: iso_c_binding
@@ -135,21 +137,13 @@ contains
   ! Ghost rows of any field with the layout of a component of V, for the
   ! displacements shift_x, shift_z of the upper image.
   subroutine fill_ghosts_field(field, shift_x, shift_z)
+    ! (used here, not at module level: with the module-level use, nvfortran
+    !  25.9 loses the dummy `kind` of a target region in hst_linsolve,
+    !  which uses this module)
+    use hst_mpi, only: exchange_ghost_rows
     complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
     real(C_DOUBLE), intent(in) :: shift_x, shift_z
-    integer(C_INT) :: ix, iz
-    complex(C_DOUBLE_COMPLEX) :: ph
-    !$omp target teams distribute parallel do collapse(2) default(none) &
-    !$omp shared(field, nx0, nxN, nz, ny, alfa0, beta0, shift_x, shift_z) private(ix, iz, ph)
-    do ix = nx0, nxN
-      do iz = -nz, nz
-        ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
-        field(ny, iz, ix) = field(0, iz, ix)*ph
-        field(ny + 1, iz, ix) = field(1, iz, ix)*ph
-        field(-1, iz, ix) = field(ny - 1, iz, ix)*conjg(ph)
-        field(-2, iz, ix) = field(ny - 2, iz, ix)*conjg(ph)
-      end do
-    end do
+    call exchange_ghost_rows(field, shift_x, shift_z)
   end subroutine fill_ghosts_field
 
 end module hst_derivatives

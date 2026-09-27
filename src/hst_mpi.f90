@@ -3,8 +3,12 @@
 ! In spectral space (z-pencil) a rank owns the x modes nx0:nxN and every z
 ! mode; in physical space (x-pencil) it owns the z lines nz0:nzN and every x
 ! point.  Moving between the two is one alltoall over all ranks per field.
-! Each rank owns the whole of y (npy = 1); the ny0:nyN names are kept so
-! that a y decomposition can be added later.
+! Each rank owns the whole of y (npy = 1): the y decomposition (npy slabs
+! of rows ny0:nyN, the ghost rows exchanged between neighbouring slabs and
+! the line solves coupled through a reduced interface system) lives on the
+! branch multinode-y and touches this file, hst_linsolve and hst_io only;
+! the physics files are written for any npy (DESIGN.md 7 (i)).  Here
+! exchange_ghost_rows is the shear-periodic wrap of one slab.
 !
 ! A transpose is done in two halves so that the alltoall of one field can
 ! overlap the transforms of the next (the channel's CHANNEL_OVERLAPPING):
@@ -39,9 +43,8 @@ module hst_mpi
   implicit none
   private
 
-  public :: setup_decomposition, free_mpi
+  public :: setup_decomposition, free_mpi, exchange_ghost_rows
   public :: transpose_zTOx_start, transpose_zTOx_finish, transpose_xTOz_start, transpose_xTOz_finish
-  public :: cpl_view_type, cpl_pview_type
 
   ! the two buffer pairs of the double buffering
   complex(C_DOUBLE_COMPLEX), allocatable, target, save :: sendbuf(:, :), recvbuf(:, :)
@@ -106,26 +109,28 @@ module hst_mpi
     end function ncclRecv
   end interface
 #endif
-  ! MPI-IO views of this rank's x slab in a CPL-layout file (see hst_io):
-  ! the file array is (3, ny+4, 2nz+1, nx+1) in Fortran order for the
-  ! velocity and (ny+4, 2nz+1, nx+1) for the pressure.
-  type(MPI_Datatype), save :: cpl_view_type, cpl_pview_type
   integer :: ierr
 
 contains
 
-  ! npxz = nproc ranks each own nxB = (nx+1)/nproc x modes in spectral space
-  ! and nzB = nzd/nproc z lines in physical space.  The alltoall needs both
-  ! splits to be even.
+  ! npxz = nproc/npy ranks each own nxB = (nx+1)/npxz x modes in spectral
+  ! space and nzB = nzd/npxz z lines in physical space (the alltoall needs
+  ! both splits to be even), and npy slabs own nyB = ny/npy rows each.
+  ! This version has npy = 1: the slab is the whole of y.
   subroutine setup_decomposition()
     integer(C_SIZE_T) :: n
 
-    npxz = nproc
-    ipxz = iproc
+    if (npy /= 1) then
+      if (has_terminal) print *, 'ERROR: npy > 1 (the y decomposition) is on the branch multinode-y'
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
+    npxz = nproc/npy
+    ipy = iproc/npxz
+    ipxz = mod(iproc, npxz)
     if (mod(nx + 1, npxz) /= 0 .or. mod(nzd, npxz) /= 0) then
       if (has_terminal) then
-        print *, 'ERROR: nproc must divide both nx+1 and nzd.'
-        print *, '       nx+1 =', nx + 1, ' nzd =', nzd, ' nproc =', nproc
+        print *, 'ERROR: the number of x-z pencils must divide both nx+1 and nzd.'
+        print *, '       nx+1 =', nx + 1, ' nzd =', nzd, ' npxz =', npxz
       end if
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
     end if
@@ -135,8 +140,9 @@ contains
     nz0 = ipxz*nzd/npxz
     nzN = (ipxz + 1)*nzd/npxz - 1
     nzB = nzN - nz0 + 1
-    ny0 = 0
-    nyN = ny - 1
+    nyB = ny/npy
+    ny0 = ipy*nyB
+    nyN = ny0 + nyB - 1
     has_average = (nx0 == 0)
     !$omp target update to(nx0, nxN, nxB, nz0, nzN, nzB, ny0, nyN, ny, ni, S)
     if (has_terminal) write (*, '(A,I5,A,I5,A,I5)') '   ranks =', nproc, '   nxB   =', nxB, '   nzB   =', nzB
@@ -150,13 +156,6 @@ contains
     sendbuf = 0; recvbuf = 0
     !$omp target enter data map(alloc: sendbuf, recvbuf)
     call setup_transport()
-
-    call MPI_Type_create_subarray(4, [3, ny + 4, 2*nz + 1, nx + 1], [3, ny + 4, 2*nz + 1, nxB], &
-                                  [0, 0, 0, nx0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, cpl_view_type, ierr)
-    call MPI_Type_commit(cpl_view_type, ierr)
-    call MPI_Type_create_subarray(3, [ny + 4, 2*nz + 1, nx + 1], [ny + 4, 2*nz + 1, nxB], &
-                                  [0, 0, nx0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, cpl_pview_type, ierr)
-    call MPI_Type_commit(cpl_pview_type, ierr)
   end subroutine setup_decomposition
 
   subroutine free_mpi()
@@ -172,9 +171,35 @@ contains
 #endif
     !$omp target exit data map(delete: sendbuf, recvbuf)
     deallocate (sendbuf, recvbuf)
-    call MPI_Type_free(cpl_view_type, ierr)
-    call MPI_Type_free(cpl_pview_type, ierr)
   end subroutine free_mpi
+
+  !------------------------------------------------------------------------
+  ! The four ghost rows of a field with the layout of a component of V
+  !------------------------------------------------------------------------
+  ! The two rows above the slab are the two lowest rows of the slab above,
+  ! the two below the two highest rows of the slab below, and across the
+  ! box edge the images carry the shear-periodic phase of the displacements
+  ! shift_x, shift_z of the upper image (hst_derivatives):
+  !   f(ny) = f(0) ph,  f(ny+1) = f(1) ph,  f(-1) = f(ny-1) conjg(ph),  f(-2) = f(ny-2) conjg(ph).
+  ! With one slab both neighbours are the rank itself and the exchange is
+  ! this wrap.
+  subroutine exchange_ghost_rows(field, shift_x, shift_z)
+    complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
+    real(C_DOUBLE), intent(in) :: shift_x, shift_z
+    integer(C_INT) :: ix, iz
+    complex(C_DOUBLE_COMPLEX) :: ph
+    !$omp target teams distribute parallel do collapse(2) default(none) &
+    !$omp shared(field, nx0, nxN, nz, ny0, nyN, alfa0, beta0, shift_x, shift_z) private(ix, iz, ph)
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
+        field(nyN + 1, iz, ix) = field(ny0, iz, ix)*ph
+        field(nyN + 2, iz, ix) = field(ny0 + 1, iz, ix)*ph
+        field(ny0 - 1, iz, ix) = field(nyN, iz, ix)*conjg(ph)
+        field(ny0 - 2, iz, ix) = field(nyN - 1, iz, ix)*conjg(ph)
+      end do
+    end do
+  end subroutine exchange_ghost_rows
 
   ! transport = 'nccl' needs a build with NCCL=1 and one GPU per rank;
   ! 'auto' takes NCCL when both hold and MPI otherwise.  One rank needs no
