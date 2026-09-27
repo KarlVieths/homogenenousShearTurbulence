@@ -1000,6 +1000,27 @@ the record by caching the 16 matrix coefficients per line for the
 system kinds whose matrix does not change between calls (`KIND_D0`,
 `KIND_DY`; the implicit systems change with `lambda`).
 
+**HoreKA, one A100 node (jobs 5167735 and 5167736, 2026-09-27
+evening; the dev partition had nothing running for three hours before
+they started).**  The suite with 2 pencils x 2 slabs (NCCL for the
+alltoall inside each slab): all 12 tests pass, the 4-GPU `small` deck
+agrees with the login node's CPU run at 3e-14.  The A/B of `main`
+against the branch at `npy = 1` (`jobs/horeka_ab.slurm`, same node):
+
+| s/step | main | branch, npy = 1 | solve phases main -> branch |
+| --- | --- | --- | --- |
+| bench_256, 1 A100 | 0.0827 | 0.0833 | implicit 7.3 -> 7.7 ms, ghosts/dv/dy 5.1 -> 5.6 |
+| bench_256, 4 A100 | 0.0303 | 0.0304 | 2.45 -> 2.52, 1.96 -> 2.00 |
+| bench_512, 1 A100 | 0.645 | 0.654 | 50.4 -> 55.9, 35.1 -> 38.7 |
+| bench_512, 4 A100 | 0.215 | 0.217 | 14.6 -> 15.4, 9.8 -> 10.7 |
+
+A wash at the step (0.5-1.3%), and the solve phases show what the
+split costs with one slab: 6-11%, i.e. the record written per line, the
+second launch and the assembly of a 2 x 2 system through the general
+16 x 16 path in thread-private memory.  Not worth a special case; the
+lever, if ever needed, is a `nslab == 1` branch in `penta_backward`
+that reuses the old 2 x 2 Schur code (about 20 lines).
+
 **nvfortran 25.9 and names in OpenMP clauses.**  Once `hst_mpi` (a CUDA
 Fortran module) is visible in a file, even through a `use ..., only:`
 chain, nvfortran rejects the names `kind` and `x` in the data-sharing
