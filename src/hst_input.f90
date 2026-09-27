@@ -43,8 +43,8 @@ contains
     read (unit, nml=time_control); rewind (unit)
     read (unit, nml=init)
     close (unit)
-    if (transport /= 'auto' .and. transport /= 'mpi' .and. transport /= 'nccl') then
-      print *, 'ERROR: transport must be auto, mpi or nccl'
+    if (transport /= 'auto' .and. transport /= 'mpi' .and. transport /= 'nccl' .and. transport /= 'nccl2') then
+      print *, 'ERROR: transport must be auto, mpi, nccl or nccl2'
       error stop 1
     end if
     if (sl_amplitude /= 0.0d0 .and. s2_amplitude /= 0.0d0) then

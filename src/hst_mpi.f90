@@ -16,7 +16,10 @@
 ! MPI_Ialltoall, waited for in finish) or, in a build with NCCL=1 and one
 ! GPU per rank, through NCCL as grouped send/recv pairs on a second CUDA
 ! stream, ordered against the OpenMP target stream by two events, so that
-! the host never waits (deck parameter transport).
+! the host never waits (deck parameter transport).  On several nodes
+! transport = 'nccl2' does the alltoall in two levels, so that the data
+! changing node goes in one message per rank and remote node (see
+! alltoall_start_two_level).
 !
 ! Taken from channel/src/mpi/mpi_transpose.f90 with the y-slab machinery
 ! and HIP removed.  The pack kernels are block copies (the alltoall
@@ -49,6 +52,10 @@ module hst_mpi
   !$omp declare target(sendcount)
   logical, save :: transpose_is_local
   logical, save :: use_nccl = .false.
+  ! the two-level alltoall: ranks are node*lpn + l with lpn ranks per node
+  logical, save :: two_level = .false.
+  integer, save :: nnodes = 1, lpn = 1, inode = 0, ilocal = 0
+  complex(C_DOUBLE_COMPLEX), allocatable, target, save :: stagebuf(:, :)   ! the blocks this rank relays to other nodes
   type(MPI_Request), save :: req(2)
 #ifdef HAVE_CUDA
   integer(kind=cuda_stream_kind), save :: compute_stream, comm_stream
@@ -150,6 +157,10 @@ contains
     sendbuf = 0; recvbuf = 0
     !$omp target enter data map(alloc: sendbuf, recvbuf)
     call setup_transport()
+    if (.not. two_level) n = 1
+    allocate (stagebuf(n, 2))
+    stagebuf = 0
+    !$omp target enter data map(alloc: stagebuf)
 
     call MPI_Type_create_subarray(4, [3, ny + 4, 2*nz + 1, nx + 1], [3, ny + 4, 2*nz + 1, nxB], &
                                   [0, 0, 0, nx0], MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, cpl_view_type, ierr)
@@ -170,22 +181,26 @@ contains
       ierr = cudaEventDestroy(ev_done(1)); ierr = cudaEventDestroy(ev_done(2))
     end if
 #endif
-    !$omp target exit data map(delete: sendbuf, recvbuf)
-    deallocate (sendbuf, recvbuf)
+    !$omp target exit data map(delete: sendbuf, recvbuf, stagebuf)
+    deallocate (sendbuf, recvbuf, stagebuf)
     call MPI_Type_free(cpl_view_type, ierr)
     call MPI_Type_free(cpl_pview_type, ierr)
   end subroutine free_mpi
 
   ! transport = 'nccl' needs a build with NCCL=1 and one GPU per rank;
-  ! 'auto' takes NCCL when both hold and MPI otherwise.  One rank needs no
-  ! transport at all.  On the GPU the alltoall runs on its own stream
-  ! (NCCL) or is started by the host once the compute stream has packed
-  ! (MPI); the events order the two streams.
+  ! 'auto' takes NCCL when both hold and MPI otherwise; 'nccl2' is NCCL
+  ! with the two-level alltoall on several nodes (plain NCCL on one), and
+  ! needs the ranks of a node to be consecutive (mpirun --map-by
+  ! ppr:<ranks>:node).  One rank needs no transport at all.  On the GPU
+  ! the alltoall runs on its own stream (NCCL) or is started by the host
+  ! once the compute stream has packed (MPI); the events order the two
+  ! streams.
   subroutine setup_transport()
 #ifdef HAVE_NCCL
     type(nccl_unique_id) :: id
     type(MPI_Comm) :: node
-    integer :: node_ranks, r
+    integer :: node_ranks, node_rank, node_min, r
+    logical :: consecutive
 #endif
     use_nccl = .false.
     if (transpose_is_local) return
@@ -201,8 +216,21 @@ contains
 #ifdef HAVE_NCCL
       call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, node, ierr)
       call MPI_Comm_size(node, node_ranks, ierr)
+      call MPI_Comm_rank(node, node_rank, ierr)
       call MPI_Comm_free(node, ierr)
+      node_min = node_ranks
       call MPI_Allreduce(MPI_IN_PLACE, node_ranks, 1, MPI_INTEGER, MPI_MAX, MPI_COMM_WORLD, ierr)
+      call MPI_Allreduce(MPI_IN_PLACE, node_min, 1, MPI_INTEGER, MPI_MIN, MPI_COMM_WORLD, ierr)
+      consecutive = (node_min == node_ranks .and. node_rank == mod(iproc, node_ranks))
+      call MPI_Allreduce(MPI_IN_PLACE, consecutive, 1, MPI_LOGICAL, MPI_LAND, MPI_COMM_WORLD, ierr)
+      if (transport == 'nccl2' .and. nproc > node_ranks) then
+        if (.not. consecutive) then
+          if (has_terminal) print *, 'ERROR: transport = nccl2 needs the same number of consecutive ranks on every node'
+          call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+        end if
+        two_level = .true.
+        lpn = node_ranks; nnodes = nproc/lpn; inode = iproc/lpn; ilocal = mod(iproc, lpn)
+      end if
       if (node_ranks <= omp_get_num_devices()) then
         if (iproc == 0) r = ncclGetUniqueId(id)
         call MPI_Bcast(id%bytes, 128, MPI_BYTE, 0, MPI_COMM_WORLD, ierr)
@@ -214,18 +242,24 @@ contains
         end if
         nccl_stream = transfer(comm_stream, nccl_stream)
         use_nccl = .true.
-      else if (transport == 'nccl') then
+      else if (transport(1:4) == 'nccl') then
         if (has_terminal) print *, 'ERROR: transport = nccl needs one GPU per rank'
         call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
       end if
 #else
-      if (transport == 'nccl') then
+      if (transport(1:4) == 'nccl') then
         if (has_terminal) print *, 'ERROR: transport = nccl needs a build with NCCL=1'
         call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
       end if
 #endif
     end if
-    if (has_terminal) write (*, '(A,A)') '   alltoall transport: ', merge('nccl', 'mpi ', use_nccl)
+    if (has_terminal) then
+      if (two_level) then
+        write (*, '(A,I0,A,I0,A)') '   alltoall transport: nccl, two levels (', nnodes, ' nodes x ', lpn, ' ranks)'
+      else
+        write (*, '(A,A)') '   alltoall transport: ', merge('nccl', 'mpi ', use_nccl)
+      end if
+    end if
   end subroutine setup_transport
 
   !------------------------------------------------------------------------
@@ -361,8 +395,13 @@ contains
   subroutine alltoall_start(b)
     integer, intent(in) :: b
 #ifdef HAVE_NCCL
-    integer(C_SIZE_T) :: nbytes
     integer :: peer, r
+#endif
+#ifdef HAVE_NCCL
+    if (two_level) then
+      call alltoall_start_two_level(b)
+      return
+    end if
 #endif
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(sendbuf, recvbuf)
@@ -371,13 +410,10 @@ contains
 #ifdef HAVE_NCCL
       r = cudaEventRecord(ev_packed(b), compute_stream)
       r = cudaStreamWaitEvent(comm_stream, ev_packed(b), 0)
-      nbytes = 16_C_SIZE_T*int(sendcount, C_SIZE_T)
       r = ncclGroupStart()
       do peer = 0, npxz - 1
-        r = ncclSend(c_loc(sendbuf(peer*sendcount + 1, b)), nbytes, NCCL_UINT8, peer, nccl_comm, nccl_stream)
-        if (r /= 0) error stop 'ncclSend failed'
-        r = ncclRecv(c_loc(recvbuf(peer*sendcount + 1, b)), nbytes, NCCL_UINT8, peer, nccl_comm, nccl_stream)
-        if (r /= 0) error stop 'ncclRecv failed'
+        call nccl_send(c_loc(sendbuf(peer*sendcount + 1, b)), 1, peer)
+        call nccl_recv(c_loc(recvbuf(peer*sendcount + 1, b)), 1, peer)
       end do
       r = ncclGroupEnd()
       if (r /= 0) error stop 'ncclGroupEnd failed'
@@ -395,6 +431,69 @@ contains
     !$omp end target data
 #endif
   end subroutine alltoall_start
+
+#ifdef HAVE_NCCL
+  ! nblocks blocks of sendcount elements at the device address buf
+  ! (c_loc of a buffer element under use_device_addr) from/to rank peer,
+  ! inside a group
+  subroutine nccl_send(buf, nblocks, peer)
+    type(C_PTR), intent(in) :: buf
+    integer, intent(in) :: nblocks, peer
+    integer :: r
+    r = ncclSend(buf, 16_C_SIZE_T*int(nblocks, C_SIZE_T)*int(sendcount, C_SIZE_T), NCCL_UINT8, peer, nccl_comm, nccl_stream)
+    if (r /= 0) error stop 'ncclSend failed'
+  end subroutine nccl_send
+
+  subroutine nccl_recv(buf, nblocks, peer)
+    type(C_PTR), intent(in) :: buf
+    integer, intent(in) :: nblocks, peer
+    integer :: r
+    r = ncclRecv(buf, 16_C_SIZE_T*int(nblocks, C_SIZE_T)*int(sendcount, C_SIZE_T), NCCL_UINT8, peer, nccl_comm, nccl_stream)
+    if (r /= 0) error stop 'ncclRecv failed'
+  end subroutine nccl_recv
+
+  ! The alltoall in two levels (transport = 'nccl2', several nodes).  Rank
+  ! (node, l) is node*lpn + l.  Level 1, inside the node: rank (node, l)
+  ! sends to local rank l' its block for every rank (n, l'); the one for
+  ! (node, l') is final and lands in recvbuf, the others land in stagebuf
+  ! of rank (node, l'), which relays them.  Level 2, between nodes: rank
+  ! (node, l) sends to (n, l) the lpn blocks it relays for that rank, one
+  ! message per remote node instead of one per remote rank; they are the
+  ! blocks from sources (node, 0..lpn-1) and land in recvbuf, where those
+  ! sources are contiguous.  Both levels are groups on the communication
+  ! stream, so level 2 follows level 1.  stagebuf(block (n, l)) is the
+  ! block from local source l bound for node n.
+  subroutine alltoall_start_two_level(b)
+    integer, intent(in) :: b
+    integer :: n, l, r
+    !$omp target data use_device_addr(sendbuf, recvbuf, stagebuf)
+    r = cudaEventRecord(ev_packed(b), compute_stream)
+    r = cudaStreamWaitEvent(comm_stream, ev_packed(b), 0)
+    r = ncclGroupStart()
+    do l = 0, lpn - 1
+      do n = 0, nnodes - 1
+        call nccl_send(c_loc(sendbuf((n*lpn + l)*sendcount + 1, b)), 1, inode*lpn + l)
+        if (n == inode) then
+          call nccl_recv(c_loc(recvbuf((n*lpn + l)*sendcount + 1, b)), 1, inode*lpn + l)
+        else
+          call nccl_recv(c_loc(stagebuf((n*lpn + l)*sendcount + 1, b)), 1, inode*lpn + l)
+        end if
+      end do
+    end do
+    r = ncclGroupEnd()
+    if (r /= 0) error stop 'ncclGroupEnd failed'
+    r = ncclGroupStart()
+    do n = 0, nnodes - 1
+      if (n == inode) cycle
+      call nccl_send(c_loc(stagebuf(n*lpn*sendcount + 1, b)), lpn, n*lpn + ilocal)
+      call nccl_recv(c_loc(recvbuf(n*lpn*sendcount + 1, b)), lpn, n*lpn + ilocal)
+    end do
+    r = ncclGroupEnd()
+    if (r /= 0) error stop 'ncclGroupEnd failed'
+    r = cudaEventRecord(ev_done(b), comm_stream)
+    !$omp end target data
+  end subroutine alltoall_start_two_level
+#endif
 
   subroutine alltoall_wait(b)
     integer, intent(in) :: b
