@@ -875,14 +875,18 @@ change that.
 | 8 GPUs, nccl, each rank bound to its GPU's NUMA domain (`jobs/bind_numa.sh`) | 0.0719 |
 | 8 GPUs, two-level alltoall `nccl2`, unbound / bound | 0.1196 / 0.1189 (0.897) |
 | 8 GPUs, mpi | 0.2896 |
-| 8 GPUs, nccl, `NCCL_NET_GDR_LEVEL=SYS` (GPUDirect RDMA forced) | GDR_RESULT |
+| 8 GPUs, nccl, `NCCL_NET_GDR_LEVEL=SYS` (GPUDirect RDMA forced) | 0.1275 (0.950) |
 
 1. *GPUDirect RDMA.*  `NCCL_DEBUG=INFO` shows the adapter GDR-capable
    ("GPU Direct RDMA (nvidia-peermem) enabled for HCA 0") but every
    connection "via NET/IBext_v9/2/Shared": the transfers go through
    host memory, because the GPUs are farther from the adapter (NODE and
    SYS distance) than NCCL's default `NCCL_NET_GDR_LEVEL` allows.
-   Forcing it with `NCCL_NET_GDR_LEVEL=SYS`: GDR_SENTENCE
+   Forcing it with `NCCL_NET_GDR_LEVEL=SYS` (job 5167650) makes every
+   connection "GDRDMA/Shared" and the step 1.8x *slower* (0.1275 against
+   0.0717 at 256^3, 0.950 against 0.527 at 512^3): the RDMA reads of
+   GPUs 2 and 3 cross the socket interconnect, which is why NCCL's
+   default keeps them off.  The default is right on this machine.
 2. *NUMA binding.*  `jobs/bind_numa.sh` runs each rank under `numactl`
    on the cores and memory of its GPU's NUMA node (the wrapper takes
    the local rank, reads the GPU's PCI address and its `numa_node` in
