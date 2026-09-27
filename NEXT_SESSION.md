@@ -15,11 +15,13 @@ fluid dynamics goes to `main` and reaches the branch by `git merge
 main`, never the reverse.
 
 Validated (suite + three regression decks at 1e-10): CPU 2x1, 2x2, 1x4
-slabs; RTX 3060 2x2; istmcetus NCCL 1x2 and 2x1.  Not yet run anywhere:
-HoreKA.  The session ended because `ssh horeka` needs an interactive
-login (the ControlMaster socket of the previous session had expired;
-in Claude Code type `! ssh horeka true` once, the master then persists
-8 h).
+slabs; RTX 3060 2x2; istmcetus NCCL 1x2 and 2x1; HoreKA one node 2x2
+(suite, job 5167735) and the A/B at `npy = 1` (job 5167736, a wash:
+FINDINGS.md).  Steps 1-3 below are therefore done; the two-node job
+5167737 was queued on `accelerated` when the session ended (output
+`~/hst-y/hst-2node-5167737.out`; if it never ran, resubmit as in step 4).  `ssh horeka` needs an interactive login when the ControlMaster
+socket has expired: in Claude Code type `! ssh horeka true` once, the
+master then persists 8 h; do not retry failed logins (HoreKA counts them).
 
 ## What to do
 
