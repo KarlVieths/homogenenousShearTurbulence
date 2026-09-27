@@ -68,7 +68,7 @@ sbatch --ntasks-per-node=4 --gres=gpu:4 --export=ALL,NP=4 jobs/horeka_profile.sl
 sbatch --export=ALL,A_ROOT=$HOME/hst,B_ROOT=$HOME/hst-exp jobs/horeka_ab.slurm       # A/B: both builds, same node, timer + nsys
 sbatch --export=ALL,A_ROOT=$HOME/hst-exp,B_ROOT=$HOME/hst-exp2,C_ROOT=$HOME/hst-exp3 jobs/horeka_ab.slurm   # three-way
 sbatch --export=ALL,HST_ROOT=$HOME/hst-exp,KERNEL=regex:buildrhs,SKIP=6,COUNT=2 jobs/horeka_ncu.slurm   # Nsight Compute counters
-sbatch --partition=accelerated jobs/horeka_2node.slurm        # 4 A100 on one node against 8 on two, nccl and mpi (dev has 3 nodes: use accelerated)
+sbatch --partition=accelerated jobs/horeka_2node.slurm        # 4 A100 on one node against 8 on two (dev has 3 nodes: use accelerated); CONFIGS and NCCL_* overridable
 ```
 
 `dev_accelerated` runs one job per user at a time and queues at most
@@ -111,7 +111,11 @@ the two solve phases 14%; the exposed alltoall is about 13% of the step.
    line solver, the I/O types and the statistics; it is the largest
    change since the start and must be designed with the user first.
    If the user does not need more than four A100 per run, skip it:
-   the code is done at one node.
+   the code is done at one node.  What cannot help is already measured
+   (FINDINGS.md, the second node): GPUDirect RDMA, NUMA binding of the
+   ranks (`jobs/bind_numa.sh`) and a two-level alltoall (commit c151db4,
+   reverted); the flat NCCL alltoall runs at the wire rate of the
+   node's single HDR adapter.
 2. **Deeper overlap** (the alltoalls of the first product group behind
    the products and `buildrhs` of the second; six products in memory at
    once): at most the exposed 13% of the 4-GPU step on one node, more

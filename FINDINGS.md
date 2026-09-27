@@ -850,3 +850,57 @@ line solver's border couplings and the ghost rows cross the node
 boundary, a few KB per line instead of half the field.  That is the
 only item left that adds real structure, and the next session should
 ask before starting it.
+
+**Can the transpose be made to perform better across nodes?** (asked
+after the measurement above; job 5167650 on two nodes, hkn0433 and
+hkn0514, with the extended `jobs/horeka_2node.slurm`.)  Three things
+were tried, none helps, and the node's topology says why.
+
+The topology (`nvidia-smi topo -m` in the job): each A100 node has one
+InfiniBand adapter (`mlx5_0`, HDR, 25 GB/s each way) and one RoCE port
+(`mlx5_2`), both on NUMA node 0 next to GPUs 0 and 1; GPUs 2 and 3 sit
+on the other socket.  NCCL uses the InfiniBand adapter for every
+connection (its log names net device 2 for all of them).  The bytes that
+must cross: at 256^3 on 8 ranks a block is 3.2 MB, a rank sends four of
+its seven blocks to the other node, 51 MB per node per field alltoall,
+1.38 GB per node per step.  At 25 GB/s that is 55 ms; the 8-GPU step
+exceeds the 4-GPU step by 42 ms, so NCCL is already at the wire rate
+with part of it hidden behind the transforms.  Nothing below could
+change that.
+
+| bench_256, 20 steps (bench_512, 10 steps) | s/step |
+| --- | --- |
+| 4 GPUs, one node, nccl | 0.0297 (0.216) |
+| 8 GPUs, two nodes, nccl, ranks unbound | 0.0717 (0.527 bound) |
+| 8 GPUs, nccl, each rank bound to its GPU's NUMA domain (`jobs/bind_numa.sh`) | 0.0719 |
+| 8 GPUs, two-level alltoall `nccl2`, unbound / bound | 0.1196 / 0.1189 (0.897) |
+| 8 GPUs, mpi | 0.2896 |
+| 8 GPUs, nccl, `NCCL_NET_GDR_LEVEL=SYS` (GPUDirect RDMA forced) | GDR_RESULT |
+
+1. *GPUDirect RDMA.*  `NCCL_DEBUG=INFO` shows the adapter GDR-capable
+   ("GPU Direct RDMA (nvidia-peermem) enabled for HCA 0") but every
+   connection "via NET/IBext_v9/2/Shared": the transfers go through
+   host memory, because the GPUs are farther from the adapter (NODE and
+   SYS distance) than NCCL's default `NCCL_NET_GDR_LEVEL` allows.
+   Forcing it with `NCCL_NET_GDR_LEVEL=SYS`: GDR_SENTENCE
+2. *NUMA binding.*  `jobs/bind_numa.sh` runs each rank under `numactl`
+   on the cores and memory of its GPU's NUMA node (the wrapper takes
+   the local rank, reads the GPU's PCI address and its `numa_node` in
+   sysfs).  No effect: 0.0719 against 0.0717.  The host side of NCCL is
+   not the limit.
+3. *Two-level alltoall* (`transport = 'nccl2'`, commit c151db4, reverted
+   in 492469b): level 1 inside the node, each rank sends to local rank
+   l' its blocks for every rank with that local index, the ones bound
+   for other nodes into a staging buffer of the local relay; level 2
+   one message per rank and remote node, which lands in the receive
+   buffer where those sources are contiguous, so the unpack is
+   unchanged.  About 60 lines with a check that the ranks of a node are
+   consecutive.  Correct (regression decks on 8 ranks over two nodes at
+   7e-14) and 1.7x *slower*: the flat alltoall already saturates the
+   link, its NVLink part overlaps its InfiniBand part, while the two
+   levels are sequential and a single message per peer gets fewer NCCL
+   channels than four concurrent ones.  Not kept in main.
+
+So with x-z pencils the transpose cannot be made cheaper across nodes
+on this machine: the volume is fixed by the decomposition and the wire
+is already full.  Only the y decomposition (WP6) changes the volume.

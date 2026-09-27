@@ -163,8 +163,10 @@ the FFTs (31% of the kernel time), `buildrhs` (17%) and the line solver
 exposed part of the alltoall (about 13% of the step; the rest is hidden
 behind the transforms); on two nodes (8 A100, `jobs/horeka_2node.slurm`) the
 step is 2.1-2.3x *slower* than on four GPUs of one node, because half
-of every alltoall then crosses InfiniBand, so a second node needs the y
-decomposition (WP6).
+of every alltoall then crosses the node's single InfiniBand link at its
+wire rate (GPUDirect RDMA, NUMA binding and a two-level alltoall were
+measured and do not help), so a second node needs the y decomposition
+(WP6).
 
 ## Status
 
