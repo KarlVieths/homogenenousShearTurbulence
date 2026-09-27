@@ -168,8 +168,12 @@ behind the transforms); on two nodes (8 A100, `jobs/horeka_2node.slurm`) the
 step is 2.1-2.3x *slower* than on four GPUs of one node, because half
 of every alltoall then crosses the node's single InfiniBand link at its
 wire rate (GPUDirect RDMA, NUMA binding and a two-level alltoall were
-measured and do not help), so a second node needs the y decomposition
-(WP6).
+measured and do not help), so a second node needs the y decomposition:
+the branch `multinode-y` (`npy` slabs in y, one per node, the alltoalls
+inside the node, the line solves coupled by a small reduced system;
+DESIGN.md 7 (i), FINDINGS.md "The y decomposition").  It is validated on
+the ISTM boxes with two and four slabs; its two-node numbers on HoreKA are
+the next session's task (NEXT_SESSION.md).
 
 ## Status
 
@@ -178,7 +182,7 @@ measured and do not help), so a second node needs the y decomposition
 | numerics, GPU, pressure, CPL files, S2, Stokes layer | done and validated (FINDINGS.md) |
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
 | NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
-| y decomposition | on the branch `multinode-y` (DESIGN.md 7 (i), WP6); `main` stays `npy = 1`; needed for a second node (FINDINGS.md, the second node) |
+| y decomposition | on the branch `multinode-y` (DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU, two-node timing pending (NEXT_SESSION.md); `main` stays `npy = 1` |
 | safety net | `tests/run_tests.sh` (12 runs) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
