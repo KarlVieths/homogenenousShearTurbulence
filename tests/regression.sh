@@ -1,17 +1,21 @@
 #!/bin/bash
 # Regression against the reference fields in tests/reference/.
-#   tests/regression.sh [build-cpu|build-gpu] [nranks] [--update]
+#   tests/regression.sh [build-cpu|build-gpu] [nranks] [npy] [--update]
 # Runs each deck of DECKS for its 50 steps and compares the final field with
 # the stored reference at 1e-10 relative (CPU and GPU builds differ by
-# ~1e-14).  --update rewrites the references from this build: do that only
-# on purpose, after a change that is meant to alter the numbers.
+# ~1e-14).  npy > 1 puts that many y slabs into the deck (the branch
+# multinode-y).  --update rewrites the references from this build: do that
+# only on purpose, after a change that is meant to alter the numbers.
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
-build=${1:-build-cpu}; np=${2:-1}; update=${3:-}
+build=${1:-build-cpu}; np=${2:-1}; npy=1; update=
+for a in "${@:3}"; do
+  if [ "$a" = "--update" ]; then update=--update; else npy=$a; fi
+done
 DECKS="small small_s2x small_stokes"
 status=0
 for d in $DECKS; do
-  work=$(mktemp -d); cp "$here/tests/decks/$d.in" "$work/hst.in"
+  work=$(mktemp -d); sed "s/&mesh /\&mesh npy = $npy, /" "$here/tests/decks/$d.in" > "$work/hst.in"
   ( cd "$work" && mpirun -np "$np" "$here/$build/hst" hst.in > run.log 2>&1 ) || { echo "$d: run failed"; status=1; continue; }
   if [ "$update" = "--update" ]; then
     cp "$work/Dati.cart.out" "$here/tests/reference/$d.fld"; echo "$d: reference updated"
