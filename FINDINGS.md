@@ -908,3 +908,104 @@ change that.
 So with x-z pencils the transpose cannot be made cheaper across nodes
 on this machine: the volume is fixed by the decomposition and the wire
 is already full.  Only the y decomposition (WP6) changes the volume.
+
+## The y decomposition (2026-09-27, session 7, branch `multinode-y`)
+
+The handout's plan, done in three steps.  The measurements of "The second
+node" above say what it is for: with x-z pencils half of every alltoall
+crosses the node's single InfiniBand adapter and eight A100 on two nodes
+are 2.1-2.3x slower than four on one; only changing what crosses the
+node can help, and y is the direction where the coupling is local.
+
+**Phase 0, on `main` (commit 452597d): the physics files written for any
+`npy`.**  The contract of DESIGN.md 7 (i): every y loop runs `ny0, nyN`,
+ghost rows come only from `exchange_ghost_rows` in `hst_mpi` (on `main`
+the wrap of the single slab), box integrals are partial sums plus an
+allreduce (the pressure mean was the one place written differently),
+the Stokes rows are touched by ownership, the initial field fills the
+rank's rows by global index, and the file I/O writes the rows a rank
+owns through a row-range MPI-IO view, the file's four ghost rows in two
+more collective writes from the ranks that own their sources (a rank's
+file rows are then one contiguous block, which is what a subarray view
+can describe; reading takes the interior rows and `fill_ghosts` does the
+rest).  `npy` is a deck parameter on `main` too (`&mesh`, must be 1
+there), so that `hst_params` and `hst_input` are the same on both
+branches.  Checked bit for bit against the handout commit on the three
+regression decks: GPU one and two ranks exactly zero; CPU exactly zero
+once both builds use `FFTW_ESTIMATE` (with the default `FFTW_MEASURE`
+the CPU build differs from *itself* run to run by 5e-15, because the
+timed plan choice picks different algorithms).
+
+**Phases 1 and 2, on the branch (commit 2678b4a): two files differ from
+`main`, `hst_mpi.f90` (+150 lines) and `hst_linsolve.f90` (+230);
+`hst_io.f90` needed nothing beyond phase 0.**
+
+- *Decomposition* (`hst_mpi`): `nproc = npxz*npy`, the `npxz` ranks of a
+  slab consecutive (`ipy = iproc/npxz`), so `mpirun --map-by
+  ppr:npxz:node` puts one slab on one node; `comm_xz` (the transposes,
+  MPI or one NCCL communicator per slab, its id broadcast inside the
+  slab) and `comm_y` (the y column).  `nyB = ny/npy >= 8`.
+- *Ghost rows*: with `npy = 1` the wrap in place as before (so the
+  single-slab run has no extra copies); otherwise a pack kernel of the
+  two rows for each neighbour, two `MPI_Sendrecv` on the device buffers
+  over `comm_y`, and an unpack kernel that applies the shear-periodic
+  phase on the two slabs at the box edge.
+- *The line solve*: the bordering of session 5 per slab.  The forward
+  sweep is the old one over the slab's `nyB - 2` interior rows (the
+  entries of its rows 0 and 1 that point at the slab below are the
+  border columns, with the phase factored out only on the first slab);
+  what changes is that the four rows the border rows reach (0, 1, m-2,
+  m-1) are kept as affine functions of *two* borders, `b_{s-1}` and
+  `b_s`, instead of one, and written as a record of 28 reals per line:
+  four rows of (value, 4 real coefficients) and the right-hand side of
+  the slab's two border rows (the handout counted 20 complex; the
+  coefficients are real because the interior matrix is, and the border
+  right-hand sides must travel too, since every rank assembles every
+  block row).  An in-place `MPI_Allgather` over `comm_y` of the records
+  (device buffers) between the two kernels; the second kernel assembles
+  the `2 npy x 2 npy` block-cyclic system of its line from the `npy`
+  records (the coupling of a slab to the slab above carries `ph` on the
+  last slab, that to the slab below `conjg(ph)` on the first; the block
+  columns are accumulated, since they coincide for `npy = 1` and `2`),
+  solves it by Gaussian elimination without pivoting in thread-private
+  storage (at most 16 x 16), and does the backward sweep seeded with
+  `b_s` and the border columns times `b_{s-1}`.  With `npy = 1` this is
+  the old 2 x 2 Schur complement in a different order of operations, so
+  the branch at `npy = 1` agrees with `main` to round-off, not bit for
+  bit (3e-14 on the regression decks after 50 steps, the same level as
+  the CPU/GPU difference).
+- *Validation*: the full suite and the three regression decks at 1e-10
+  on the CPU with 2 ranks x 2 slabs, 2 pencils x 2 slabs and 1 x 4
+  slabs (`nyB = 8` on `small`), on the RTX 3060 with 2 ranks x 2 slabs,
+  on istmcetus (2 x A6000, NCCL build) with 1 x 2 and 2 x 1; the line
+  solver's unit test at 1e-15 in every layout; `test_roundtrip`
+  exercises the row-range I/O.  `tests/run_tests.sh` and
+  `tests/regression.sh` take `npy` as a third argument.
+
+**What the exchange costs where it could be measured.**  bench_256 on
+the two A6000 of istmcetus (PCIe, CUDA-aware MPI, one slab per GPU):
+of a 0.170 s step, the ghost rows take 2.1 ms and the allgathers 9.4 ms
+of pure transfer (9 solves x 7.3 MB at 7 GB/s), 7% of the step; on
+HoreKA the same bytes go over InfiniBand at 25 GB/s per node, shared by
+the four ranks of the node.  The estimate for two A100 nodes at 256^3
+is therefore about 3 ms of y traffic against 15 ms of compute and the
+node-internal alltoall, i.e. a two-node step around 20 ms against 30 ms
+on one node (1.5x), and 512^3 similarly; to be measured
+(`jobs/horeka_2node.slurm` with `npy` in `CONFIGS`, `NPY_REG=2`).
+If the allgather turns out exposed and large, the next levers are (a)
+`ncclAllGather` on `comm_y` in place of MPI, (b) overlapping the
+allgather of one `line_chunk` batch with the forward sweep of the next
+(the batches exist; on the GPU the default is one batch), (c) halving
+the record by caching the 16 matrix coefficients per line for the
+system kinds whose matrix does not change between calls (`KIND_D0`,
+`KIND_DY`; the implicit systems change with `lambda`).
+
+**nvfortran 25.9 and names in OpenMP clauses.**  Once `hst_mpi` (a CUDA
+Fortran module) is visible in a file, even through a `use ..., only:`
+chain, nvfortran rejects the names `kind` and `x` in the data-sharing
+clauses of that file's target regions ("must appear in a SHARED or
+PRIVATE clause", although they do).  On `main` the module-level `use
+hst_mpi` in `hst_derivatives` triggered it in `hst_linsolve`; scoping
+the `use` to `fill_ghosts_field` cured it.  On the branch `hst_linsolve`
+uses `hst_mpi` itself, and there the dummy `kind` is called `sys` and
+the workspace `X` is `XR`.
