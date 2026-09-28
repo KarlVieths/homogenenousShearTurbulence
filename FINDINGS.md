@@ -1030,3 +1030,117 @@ hst_mpi` in `hst_derivatives` triggered it in `hst_linsolve`; scoping
 the `use` to `fill_ghosts_field` cured it.  On the branch `hst_linsolve`
 uses `hst_mpi` itself, and there the dummy `kind` is called `sys` and
 the workspace `X` is `XR`.
+
+**Two A100 nodes (job 5167737, 2026-09-28 02:30 after 6.5 h in the
+`accelerated` queue; hkn0701 and hkn0721).**  `jobs/horeka_2node.slurm`
+with `npy` in `CONFIGS`, one slab per node (`--map-by ppr:4:node`, so
+the four pencils of a slab share a node and every alltoall stays on
+NVLink); the regression decks on 8 ranks with `npy = 2` pass at 5e-14
+(5e-13 the Stokes deck, as everywhere on the GPU).
+
+| s/step | 4 GPUs, 1 node, 4 x 1 | 4 GPUs, 1 node, 2 x 2 | 8 GPUs, 2 nodes, 4 x 2 | 8 GPUs, 2 nodes, 8 x 1 (x-z pencils) |
+| --- | --- | --- | --- | --- |
+| bench_256 | 0.0306 | 0.0370 | 0.0304 | 0.0714 |
+| bench_512 | 0.2183 | 0.2423 | 0.1626 | 0.521 (session 6) |
+
+So the decomposition does what it was built for on the transposes and
+then loses most of it on its own exchange.  The two alltoall phases
+halve as they should (256^3: 24.1 ms on one node, 13.5 on two; 512^3:
+178 and 90 ms), and the solve phases, whose compute halves too, grow
+instead (256^3: 4.5 to 15.9 ms; 512^3: 26 to 66 ms).  The timer's
+"transfers only" line says where: the y exchange (the host's wait in
+`MPI_Sendrecv` and `MPI_Allgather` on device buffers over `comm_y`,
+after the device has finished the pack) is
+
+| transfers per step | ghost rows | reduced systems | sum | of the step |
+| --- | --- | --- | --- | --- |
+| bench_256, 2 nodes | 7.0 ms | 6.7 ms | 13.7 ms | 45% |
+| bench_512, 2 nodes | 24.9 ms | 29.2 ms | 54.1 ms | 33% |
+| bench_256, one node as 2 x 2 (NVLink) | 0.95 ms | 1.4 ms | 2.3 ms | 6% |
+| bench_512, one node as 2 x 2 | 1.5 ms | 2.9 ms | 4.4 ms | 2% |
+
+Without it the two-node step would be 17 ms at 256^3 (1.8x one node)
+and 109 ms at 512^3 (2.0x).  The bytes do not explain it.  Per rank a
+ghost exchange sends and receives two rows of its 8160 lines at 256^3
+(2 x 261 KB) or 32704 lines at 512^3 (2 x 1.05 MB), 12 times a step
+(four fields per substep); a record is 28 reals per line, 1.8 MB at
+256^3 and 7.3 MB at 512^3, allgathered 9 times a step (three solves per
+substep; the D0 solve of `exact_shift` is off in the benchmarks).  Per
+node that is 25 + 66 MB each way per step at 256^3 and 100 + 264 MB at
+512^3, i.e. 3.6 ms and 14.5 ms at the 25 GB/s of the node's InfiniBand
+adapter, against the 13.7 and 54 ms measured: HPC-X's MPI on device
+buffers runs the y exchange at 5-7 GB/s per node, the same 4x below
+the wire that "The second node" found for its alltoall (and the timer
+also charges the wait for the partner slab, which the MPI path
+serialises with the host).  Inside a node the same calls run at
+NVLink rate (2.3 ms), so it is the inter-node path of MPI, not the
+decomposition.
+
+Two more numbers from the same job: one node as 2 pencils x 2 slabs is
+21% slower than as 4 pencils at 256^3 and 11% at 512^3 (the y exchange
+plus longer alltoall phases with two ranks per slab), so on one node the
+pencils stay; and the 8 x 1 x-z-pencil run on two nodes reproduces the
+session-6 number (0.0714 against 0.0717).
+
+**NCCL on the y column (branch commit 54a3d2a; A/B job 5168032, the
+branch's previous commit in `~/hst-y` against the variant in
+`~/hst-exp`, same two nodes, `ROOTS` in `jobs/horeka_2node.slurm`).**
+Since session 6 had already measured MPI's inter-node device path at a
+quarter of NCCL's, the lever is the transport, not the volume: a second
+NCCL communicator over `comm_y` (`use_nccl_y`, independent of the slab's
+`use_nccl`, because one pencil per slab has no alltoall), the ghost
+rows as two grouped send/receive pairs and the records through
+`ncclAllGather` (in place, the slab's block as the send buffer), both
+issued on the compute stream between the pack and the unpack, so the
+host does not wait at all (with `timing` it does, before and after, to
+time the transfer alone); MPI on the device buffers stays as the
+fallback.  About 80 lines in `hst_mpi`, nothing elsewhere.  On the two
+A6000 of istmcetus (PCIe, one node) the change is a wash, as it should
+be: ghost rows 3.1 ms, records 8.3 ms (MPI 2.1 and 9.4).
+
+| s/step, same two nodes (hkn0426, hkn0428) | branch, MPI y exchange | with NCCL on `comm_y` |
+| --- | --- | --- |
+| bench_256, 1 node, 4 x 1 | 0.0301 | 0.0306 |
+| bench_256, 1 node, 2 x 2 | 0.0370 | 0.0375 |
+| bench_256, 2 nodes, 4 x 2 | 0.0302 | **0.0235** |
+| bench_256, 2 nodes, 8 x 1 | 0.0704 | 0.0703 |
+| bench_512, 1 node, 4 x 1 | 0.2179 | 0.2169 |
+| bench_512, 1 node, 2 x 2 | 0.2424 | 0.2440 |
+| bench_512, 2 nodes, 4 x 2 | 0.1688 | **0.1265** |
+
+The y exchange on two nodes goes from 5.9 + 7.4 ms (ghost rows +
+records) to 5.2 + 5.5 ms at 256^3 and from 25.1 + 34.9 to 8.8 + 14.9 ms
+at 512^3; everything on one node, `npy = 1` included, is a wash (the
+NCCL communicator over the column is created only with `npy > 1`).  Two
+A100 nodes are now 1.28x one node at 256^3 and 1.72x at 512^3, with the
+MPI y exchange they were 1.0x and 1.3x.  Kept on the branch.
+
+**What is left in the exchange.**  At 512^3 the records now move at 70%
+of the wire (14.9 ms against 10.5) and the ghost rows at half (8.8
+against 4.0); at 256^3 the 21 exchanges of a step cost about 0.5 ms
+each whatever their size (12 ghost exchanges of 2 x 261 KB in 5.2 ms,
+9 allgathers of 1.8 MB in 5.5 ms), i.e. a fixed cost per exchange of
+two nodes meeting through NCCL's host-proxied InfiniBand path, plus
+whatever skew the timer on rank 0 sees while the other slab arrives.
+So 10.7 ms of the 23.5 ms step at 256^3 and 23.7 of 126.5 ms at 512^3
+are still the y exchange, and what can be done about it, in the order
+of expected gain per line of code, all to be measured with `ROOTS` in
+`jobs/horeka_2node.slurm`:
+
+1. One NCCL group for the ghost rows instead of two (NCCL takes several
+   sends to the same peer in a group, in order): one kernel per
+   exchange instead of two, worth up to half of the ghost-row time at
+   256^3 if the cost is per kernel.  Five lines.
+2. The allgather of one `line_chunk` batch overlapped with the forward
+   sweep of the next (`chunk` is all the lines on the GPU today; two
+   record buffers, NCCL on a second stream with events as the alltoall
+   does): hides the bandwidth part of the records, about 10 ms of the
+   14.9 at 512^3, nothing of the fixed cost, so little at 256^3.
+3. A smaller record for the kinds whose matrix does not change between
+   calls (the 16 coefficients cached per line; `KIND_DY` every substep,
+   the implicit kinds too while `deltat` is fixed): fewer bytes, worth
+   something only at 512^3.
+
+The ghost rows' fixed cost is out of reach without computing the
+interior rows while the exchange is in flight, which is structure in
+the physics files that `main` does not want.
