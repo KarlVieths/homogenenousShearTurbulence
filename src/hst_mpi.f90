@@ -26,7 +26,10 @@
 ! MPI_Ialltoall, waited for in finish) or, in a build with NCCL=1 and one
 ! GPU per rank, through NCCL as grouped send/recv pairs on a second CUDA
 ! stream, ordered against the OpenMP target stream by two events, so that
-! the host never waits (deck parameter transport).
+! the host never waits (deck parameter transport).  The y exchanges use
+! a second NCCL communicator over the y column on the target stream
+! itself (MPI on the device buffers otherwise): across nodes MPI's device
+! path is several times slower than NCCL's (FINDINGS.md).
 !
 ! Taken from channel/src/mpi/mpi_transpose.f90 with the y-slab machinery
 ! and HIP removed.  The pack kernels are block copies (the alltoall
@@ -57,7 +60,7 @@ module hst_mpi
   integer(C_INT), save :: sendcount                ! elements per peer, one field
   !$omp declare target(sendcount)
   logical, save :: transpose_is_local
-  logical, save :: use_nccl = .false.
+  logical, save :: use_nccl = .false., use_nccl_y = .false.   ! NCCL for the alltoall (comm_xz); for the y exchanges (comm_y)
   type(MPI_Request), save :: req(2)
 #ifdef HAVE_CUDA
   integer(kind=cuda_stream_kind), save :: compute_stream, comm_stream
@@ -67,7 +70,7 @@ module hst_mpi
   type(MPI_Comm), save :: comm_xz, comm_y                       ! the ranks of a slab; the ranks of a y column
   real(C_DOUBLE), save :: t_ghost = 0.0d0, t_gather = 0.0d0     ! time in the y exchanges (timing = .true.)
   ! the two rows sent to and received from each neighbouring slab (exchange_ghost_rows)
-  complex(C_DOUBLE_COMPLEX), allocatable, save :: ghost_send(:, :, :, :), ghost_recv(:, :, :, :)
+  complex(C_DOUBLE_COMPLEX), allocatable, target, save :: ghost_send(:, :, :, :), ghost_recv(:, :, :, :)
 
 #ifdef HAVE_NCCL
   ! NCCL through its C prototypes (nccl.h).  The Fortran module of NVHPC
@@ -76,7 +79,8 @@ module hst_mpi
     integer(C_INT8_T) :: bytes(128)
   end type nccl_unique_id
   integer(C_INT), parameter :: NCCL_UINT8 = 1
-  type(C_PTR), save :: nccl_comm = C_NULL_PTR, nccl_stream = C_NULL_PTR
+  type(C_PTR), save :: nccl_comm = C_NULL_PTR, nccl_stream = C_NULL_PTR     ! the slab's communicator, on comm_stream
+  type(C_PTR), save :: nccl_comm_y = C_NULL_PTR, nccl_ystream = C_NULL_PTR  ! the y column's, on the compute stream
   interface
     function ncclGetUniqueId(id) bind(c, name='ncclGetUniqueId') result(r)
       import :: nccl_unique_id, C_INT
@@ -117,6 +121,13 @@ module hst_mpi
       integer(C_INT), value :: dtype, peer
       integer(C_INT) :: r
     end function ncclRecv
+    function ncclAllGather(sendbuf, recvbuf, count, dtype, comm, stream) bind(c, name='ncclAllGather') result(r)
+      import :: C_INT, C_PTR, C_SIZE_T
+      type(C_PTR), value :: sendbuf, recvbuf, comm, stream
+      integer(C_SIZE_T), value :: count
+      integer(C_INT), value :: dtype
+      integer(C_INT) :: r
+    end function ncclAllGather
   end interface
 #endif
   integer :: ierr
@@ -187,6 +198,7 @@ contains
   subroutine free_mpi()
 #ifdef HAVE_NCCL
     if (use_nccl) ierr = ncclCommDestroy(nccl_comm)
+    if (use_nccl_y) ierr = ncclCommDestroy(nccl_comm_y)
 #endif
 #ifdef HAVE_CUDA
     if (.not. transpose_is_local) then
@@ -220,14 +232,19 @@ contains
   ! With one slab both neighbours are the rank itself and the exchange is
   ! this wrap, done in place.  With more, the two rows for each neighbour
   ! are packed (a row is strided in memory), exchanged over comm_y with
-  ! MPI on the device buffers, and unpacked with the phase on the slabs at
-  ! the box edge.
+  ! NCCL on the compute stream (two send/receive pairs between the pack
+  ! and the unpack, the host does not wait) or with MPI on the device
+  ! buffers, and unpacked with the phase on the slabs at the box edge.
   subroutine exchange_ghost_rows(field, shift_x, shift_z)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
     real(C_DOUBLE), intent(in) :: shift_x, shift_z
     integer(C_INT) :: ix, iz, k, up, down
     complex(C_DOUBLE_COMPLEX) :: ph, f_below, f_above
     real(C_DOUBLE) :: t0
+#ifdef HAVE_NCCL
+    integer(C_SIZE_T) :: nbytes
+    integer :: r
+#endif
 
     if (npy == 1) then
       !$omp target teams distribute parallel do collapse(2) default(none) &
@@ -257,17 +274,43 @@ contains
     up = mod(ipy + 1, npy)
     down = mod(ipy - 1 + npy, npy)
 #ifdef HAVE_CUDA
-    ierr = cudaStreamSynchronize(compute_stream)
     !$omp target data use_device_addr(ghost_send, ghost_recv)
 #endif
-    t0 = MPI_Wtime()
-    call MPI_Sendrecv(ghost_send(:, :, :, 2), size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3), &
-                      MPI_DOUBLE_COMPLEX, up, 1, ghost_recv(:, :, :, 1), size(ghost_recv, 1)*size(ghost_recv, 2)*size(ghost_recv, 3), &
-                      MPI_DOUBLE_COMPLEX, down, 1, comm_y, MPI_STATUS_IGNORE, ierr)
-    call MPI_Sendrecv(ghost_send(:, :, :, 1), size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3), &
-                      MPI_DOUBLE_COMPLEX, down, 2, ghost_recv(:, :, :, 2), size(ghost_recv, 1)*size(ghost_recv, 2)*size(ghost_recv, 3), &
-                      MPI_DOUBLE_COMPLEX, up, 2, comm_y, MPI_STATUS_IGNORE, ierr)
-    if (timing) t_ghost = t_ghost + MPI_Wtime() - t0
+    if (use_nccl_y) then
+#ifdef HAVE_NCCL
+      ! the two rows for the slab above and those for the slab below as
+      ! two groups (with two slabs both neighbours are the same rank)
+      nbytes = 16_C_SIZE_T*int(size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3), C_SIZE_T)
+      if (timing) then
+        r = cudaStreamSynchronize(compute_stream); t0 = MPI_Wtime()
+      end if
+      r = ncclGroupStart()
+      r = ncclSend(c_loc(ghost_send(1, -nz, nx0, 2)), nbytes, NCCL_UINT8, up, nccl_comm_y, nccl_ystream)
+      r = ncclRecv(c_loc(ghost_recv(1, -nz, nx0, 1)), nbytes, NCCL_UINT8, down, nccl_comm_y, nccl_ystream)
+      r = ncclGroupEnd()
+      if (r /= 0) error stop 'NCCL ghost row exchange failed'
+      r = ncclGroupStart()
+      r = ncclSend(c_loc(ghost_send(1, -nz, nx0, 1)), nbytes, NCCL_UINT8, down, nccl_comm_y, nccl_ystream)
+      r = ncclRecv(c_loc(ghost_recv(1, -nz, nx0, 2)), nbytes, NCCL_UINT8, up, nccl_comm_y, nccl_ystream)
+      r = ncclGroupEnd()
+      if (r /= 0) error stop 'NCCL ghost row exchange failed'
+      if (timing) then
+        r = cudaStreamSynchronize(compute_stream); t_ghost = t_ghost + MPI_Wtime() - t0
+      end if
+#endif
+    else
+#ifdef HAVE_CUDA
+      ierr = cudaStreamSynchronize(compute_stream)
+#endif
+      t0 = MPI_Wtime()
+      call MPI_Sendrecv(ghost_send(:, :, :, 2), size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3), &
+                        MPI_DOUBLE_COMPLEX, up, 1, ghost_recv(:, :, :, 1), size(ghost_recv, 1)*size(ghost_recv, 2)*size(ghost_recv, 3), &
+                        MPI_DOUBLE_COMPLEX, down, 1, comm_y, MPI_STATUS_IGNORE, ierr)
+      call MPI_Sendrecv(ghost_send(:, :, :, 1), size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3), &
+                        MPI_DOUBLE_COMPLEX, down, 2, ghost_recv(:, :, :, 2), size(ghost_recv, 1)*size(ghost_recv, 2)*size(ghost_recv, 3), &
+                        MPI_DOUBLE_COMPLEX, up, 2, comm_y, MPI_STATUS_IGNORE, ierr)
+      if (timing) t_ghost = t_ghost + MPI_Wtime() - t0
+    end if
 #ifdef HAVE_CUDA
     !$omp end target data
 #endif
@@ -289,45 +332,73 @@ contains
   end subroutine exchange_ghost_rows
 
   ! In-place allgather over the y column of a device array of npy blocks
-  ! of n reals: block ipy holds this rank's data, the others are filled
-  ! with the other slabs' (the line solver's reduced systems, hst_linsolve).
+  ! of n reals, a(:, :, slab): block ipy holds this rank's data, the others
+  ! are filled with the other slabs' (the line solver's reduced systems,
+  ! hst_linsolve).  NCCL on the compute stream, so that the host does not
+  ! wait, or MPI on the device buffer.
   subroutine allgather_y(a, n)
-    real(C_DOUBLE), intent(inout), contiguous :: a(:, :, :)
+    real(C_DOUBLE), intent(inout), contiguous, target :: a(:, :, :)
     integer(C_INT), intent(in) :: n
     real(C_DOUBLE) :: t0
+#ifdef HAVE_NCCL
+    integer :: r
+#endif
     if (npy == 1) return
 #ifdef HAVE_CUDA
-    ierr = cudaStreamSynchronize(compute_stream)
     !$omp target data use_device_addr(a)
 #endif
-    t0 = MPI_Wtime()
-    call MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, a, n, MPI_DOUBLE_PRECISION, comm_y, ierr)
-    if (timing) t_gather = t_gather + MPI_Wtime() - t0
+    if (use_nccl_y) then
+#ifdef HAVE_NCCL
+      if (timing) then
+        r = cudaStreamSynchronize(compute_stream); t0 = MPI_Wtime()
+      end if
+      r = ncclAllGather(c_loc(a(1, 1, ipy + 1)), c_loc(a(1, 1, 1)), 8_C_SIZE_T*int(n, C_SIZE_T), NCCL_UINT8, &
+                        nccl_comm_y, nccl_ystream)
+      if (r /= 0) error stop 'ncclAllGather failed'
+      if (timing) then
+        r = cudaStreamSynchronize(compute_stream); t_gather = t_gather + MPI_Wtime() - t0
+      end if
+#endif
+    else
+#ifdef HAVE_CUDA
+      ierr = cudaStreamSynchronize(compute_stream)
+#endif
+      t0 = MPI_Wtime()
+      call MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, a, n, MPI_DOUBLE_PRECISION, comm_y, ierr)
+      if (timing) t_gather = t_gather + MPI_Wtime() - t0
+      if (ierr /= MPI_SUCCESS) error stop 'MPI_Allgather failed'
+    end if
 #ifdef HAVE_CUDA
     !$omp end target data
 #endif
-    if (ierr /= MPI_SUCCESS) error stop 'MPI_Allgather failed'
   end subroutine allgather_y
 
   ! transport = 'nccl' needs a build with NCCL=1 and one GPU per rank;
   ! 'auto' takes NCCL when both hold and MPI otherwise.  One rank needs no
   ! transport at all.  On the GPU the alltoall runs on its own stream
   ! (NCCL) or is started by the host once the compute stream has packed
-  ! (MPI); the events order the two streams.
+  ! (MPI); the events order the two streams.  The y exchanges (ghost rows,
+  ! reduced systems) go through a second NCCL communicator over the y
+  ! column, on the compute stream itself, or through MPI on the device
+  ! buffers.
   subroutine setup_transport()
 #ifdef HAVE_NCCL
     type(nccl_unique_id) :: id
     type(MPI_Comm) :: node
     integer :: node_ranks, r
 #endif
+    character(len=4) :: xz_name, y_name
     use_nccl = .false.
-    if (transpose_is_local) return
+    use_nccl_y = .false.
+    if (transpose_is_local .and. npy == 1) return
 #ifdef HAVE_CUDA
-    ierr = cudaStreamCreateWithFlags(comm_stream, cudaStreamNonBlocking)
-    ierr = cudaEventCreateWithFlags(ev_packed(1), cudaEventDisableTiming)
-    ierr = cudaEventCreateWithFlags(ev_packed(2), cudaEventDisableTiming)
-    ierr = cudaEventCreateWithFlags(ev_done(1), cudaEventDisableTiming)
-    ierr = cudaEventCreateWithFlags(ev_done(2), cudaEventDisableTiming)
+    if (.not. transpose_is_local) then
+      ierr = cudaStreamCreateWithFlags(comm_stream, cudaStreamNonBlocking)
+      ierr = cudaEventCreateWithFlags(ev_packed(1), cudaEventDisableTiming)
+      ierr = cudaEventCreateWithFlags(ev_packed(2), cudaEventDisableTiming)
+      ierr = cudaEventCreateWithFlags(ev_done(1), cudaEventDisableTiming)
+      ierr = cudaEventCreateWithFlags(ev_done(2), cudaEventDisableTiming)
+    end if
 #endif
     if (transport /= 'mpi') then
 #ifdef HAVE_NCCL
@@ -336,17 +407,31 @@ contains
       call MPI_Comm_free(node, ierr)
       call MPI_Allreduce(MPI_IN_PLACE, node_ranks, 1, MPI_INTEGER, MPI_MAX, MPI_COMM_WORLD, ierr)
       if (node_ranks <= omp_get_num_devices()) then
-        ! one NCCL communicator per slab, its id made by the slab's first rank
-        if (ipxz == 0) r = ncclGetUniqueId(id)
-        call MPI_Bcast(id%bytes, 128, MPI_BYTE, 0, comm_xz, ierr)
         r = cudaSetDevice(omp_get_default_device())
-        r = ncclCommInitRank(nccl_comm, npxz, id, ipxz)
-        if (r /= 0) then
-          if (has_terminal) print *, 'ERROR: ncclCommInitRank failed with code', r
-          call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+        if (.not. transpose_is_local) then
+          ! one NCCL communicator per slab, its id made by the slab's first rank
+          if (ipxz == 0) r = ncclGetUniqueId(id)
+          call MPI_Bcast(id%bytes, 128, MPI_BYTE, 0, comm_xz, ierr)
+          r = ncclCommInitRank(nccl_comm, npxz, id, ipxz)
+          if (r /= 0) then
+            if (has_terminal) print *, 'ERROR: ncclCommInitRank failed with code', r
+            call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+          end if
+          nccl_stream = transfer(comm_stream, nccl_stream)
+          use_nccl = .true.
         end if
-        nccl_stream = transfer(comm_stream, nccl_stream)
-        use_nccl = .true.
+        if (npy > 1) then
+          ! and one per y column, its id made by the column's first slab
+          if (ipy == 0) r = ncclGetUniqueId(id)
+          call MPI_Bcast(id%bytes, 128, MPI_BYTE, 0, comm_y, ierr)
+          r = ncclCommInitRank(nccl_comm_y, npy, id, ipy)
+          if (r /= 0) then
+            if (has_terminal) print *, 'ERROR: ncclCommInitRank (y column) failed with code', r
+            call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+          end if
+          nccl_ystream = transfer(compute_stream, nccl_ystream)
+          use_nccl_y = .true.
+        end if
       else if (transport == 'nccl') then
         if (has_terminal) print *, 'ERROR: transport = nccl needs one GPU per rank'
         call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
@@ -358,7 +443,16 @@ contains
       end if
 #endif
     end if
-    if (has_terminal) write (*, '(A,A)') '   alltoall transport: ', merge('nccl', 'mpi ', use_nccl)
+    if (has_terminal) then
+      xz_name = merge('nccl', 'mpi ', use_nccl)
+      if (transpose_is_local) xz_name = 'none'
+      y_name = merge('nccl', 'mpi ', use_nccl_y)
+      if (npy > 1) then
+        write (*, '(A,A,A,A)') '   alltoall transport: ', xz_name, ',  y exchange: ', y_name
+      else
+        write (*, '(A,A)') '   alltoall transport: ', xz_name
+      end if
+    end if
   end subroutine setup_transport
 
   !------------------------------------------------------------------------
