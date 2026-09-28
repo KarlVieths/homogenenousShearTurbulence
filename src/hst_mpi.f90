@@ -10,7 +10,7 @@
 ! the coupling along y (five-point stencils, line solves) goes between
 ! neighbouring slabs through the four ghost rows of every field
 ! (exchange_ghost_rows) and, for the line solves, through the allgather
-! of the slabs' reduced systems over the y column (allgather_y, comm_y);
+! of the slabs' reduced systems over the y column (allgather_y_start, comm_y);
 ! see hst_linsolve.  One slab per node keeps the alltoalls on NVLink
 ! (mpirun --map-by ppr:npxz:node).  The physics files know nothing of this
 ! (DESIGN.md 7 (i)); with npy = 1 this file is the x-z pencil code of the
@@ -52,7 +52,7 @@ module hst_mpi
   implicit none
   private
 
-  public :: setup_decomposition, free_mpi, exchange_ghost_rows, allgather_y, NPY_MAX
+  public :: setup_decomposition, free_mpi, exchange_ghost_rows, allgather_y_start, allgather_y_wait, NPY_MAX
   public :: transpose_zTOx_start, transpose_zTOx_finish, transpose_xTOz_start, transpose_xTOz_finish
 
   ! the two buffer pairs of the double buffering
@@ -67,6 +67,7 @@ module hst_mpi
 #ifdef HAVE_CUDA
   integer(kind=cuda_stream_kind), save :: compute_stream, comm_stream
   type(cudaEvent), save :: ev_packed(2), ev_done(2)  ! pack done (compute stream), alltoall done (comm stream)
+  type(cudaEvent), save :: ev_rec(2), ev_gath(2)     ! records written (compute stream), gathered (comm stream), per workspace
 #endif
   integer(C_INT), parameter :: TILE = 32, ROWS_PER_THREAD = 4   ! transpose_tiled: tile edge, rows per thread
   type(MPI_Comm), save :: comm_xz, comm_y                       ! the ranks of a slab; the ranks of a y column
@@ -245,7 +246,7 @@ contains
       ! the transfers alone (after the device has finished the pack), a
       ! part of the phases of hst_timer's table
       if (timing .and. has_terminal) write (*, '(A,F9.5,A,F9.5,A)') '     of which y exchange (transfers only): ghost rows', &
-        t_ghost/max(istep, 1_C_SIZE_T), ' s/step, reduced systems', t_gather/max(istep, 1_C_SIZE_T), ' s/step'
+        t_ghost/max(istep, 1_C_SIZE_T), ' s/step, reduced systems (exposed)', t_gather/max(istep, 1_C_SIZE_T), ' s/step'
     end if
     call MPI_Comm_free(comm_xz, ierr)
     call MPI_Comm_free(comm_y, ierr)
@@ -361,16 +362,23 @@ contains
     end do
   end subroutine exchange_ghost_rows
 
-  ! In-place allgather over the y column of a device array of npy blocks
-  ! of n reals, a(:, :, slab): block ipy holds this rank's data, the others
-  ! are filled with the other slabs' (the line solver's reduced systems,
-  ! hst_linsolve).  NCCL on the compute stream, so that the host does not
-  ! wait, or MPI on the device buffer.
-  subroutine allgather_y(a, n)
+  ! The allgather over the y column of the line solver's records
+  ! (hst_linsolve): a(:, first:first+count-1, s+1) is slab s's block of one
+  ! workspace w; block ipy holds this rank's records, the others are filled
+  ! with the other slabs' (one send and one receive per other slab: the
+  ! blocks of a workspace are not contiguous over the slabs, so NCCL's
+  ! allgather does not apply).  NCCL: on the communication stream, which
+  ! waits for the compute stream through ev_rec(w); allgather_y_wait makes
+  ! the compute stream wait for the transfer through ev_gath(w), so that
+  ! the forward sweep of the other workspace runs meanwhile and the host
+  ! never blocks.  MPI: on the device buffer, the host waits.
+  subroutine allgather_y_start(a, first, count, w)
     real(C_DOUBLE), intent(inout), contiguous, target :: a(:, :, :)
-    integer(C_INT), intent(in) :: n
+    integer(C_INT), intent(in) :: first, count, w
+    integer :: s, peer
     real(C_DOUBLE) :: t0
 #ifdef HAVE_NCCL
+    integer(C_SIZE_T) :: nbytes
     integer :: r
 #endif
     if (npy == 1) return
@@ -379,29 +387,52 @@ contains
 #endif
     if (use_nccl_y) then
 #ifdef HAVE_NCCL
-      if (timing) then
-        r = cudaStreamSynchronize(compute_stream); t0 = MPI_Wtime()
-      end if
-      r = ncclAllGather(c_loc(a(1, 1, ipy + 1)), c_loc(a(1, 1, 1)), 8_C_SIZE_T*int(n, C_SIZE_T), NCCL_UINT8, &
-                        nccl_comm_y, nccl_ystream)
-      if (r /= 0) error stop 'ncclAllGather failed'
-      if (timing) then
-        r = cudaStreamSynchronize(compute_stream); t_gather = t_gather + MPI_Wtime() - t0
-      end if
+      nbytes = 8_C_SIZE_T*int(size(a, 1), C_SIZE_T)*int(count, C_SIZE_T)
+      r = cudaEventRecord(ev_rec(w), compute_stream)
+      r = cudaStreamWaitEvent(comm_stream, ev_rec(w), 0)
+      r = ncclGroupStart()
+      do s = 1, npy - 1
+        peer = mod(ipy + s, npy)
+        r = ncclSend(c_loc(a(1, first, ipy + 1)), nbytes, NCCL_UINT8, peer, nccl_comm_y, nccl_stream)
+        r = ncclRecv(c_loc(a(1, first, peer + 1)), nbytes, NCCL_UINT8, peer, nccl_comm_y, nccl_stream)
+      end do
+      r = ncclGroupEnd()
+      if (r /= 0) error stop 'NCCL allgather over the y column failed'
+      r = cudaEventRecord(ev_gath(w), comm_stream)
 #endif
     else
 #ifdef HAVE_CUDA
       ierr = cudaStreamSynchronize(compute_stream)
 #endif
       t0 = MPI_Wtime()
-      call MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, a, n, MPI_DOUBLE_PRECISION, comm_y, ierr)
+      do s = 1, npy - 1                       ! shift s: send to slab ipy + s, receive slab ipy - s's block
+        peer = mod(ipy - s + npy, npy)
+        call MPI_Sendrecv(a(:, first:first + count - 1, ipy + 1), size(a, 1)*count, MPI_DOUBLE_PRECISION, mod(ipy + s, npy), 3, &
+                          a(:, first:first + count - 1, peer + 1), size(a, 1)*count, MPI_DOUBLE_PRECISION, peer, 3, &
+                          comm_y, MPI_STATUS_IGNORE, ierr)
+      end do
       if (timing) t_gather = t_gather + MPI_Wtime() - t0
-      if (ierr /= MPI_SUCCESS) error stop 'MPI_Allgather failed'
     end if
 #ifdef HAVE_CUDA
     !$omp end target data
 #endif
-  end subroutine allgather_y
+  end subroutine allgather_y_start
+
+  ! The compute stream waits for the gather of workspace w (with timing the
+  ! host measures the part not hidden behind the compute stream's work).
+  subroutine allgather_y_wait(w)
+    integer(C_INT), intent(in) :: w
+#ifdef HAVE_NCCL
+    integer :: r
+    real(C_DOUBLE) :: t0
+    if (npy == 1 .or. .not. use_nccl_y) return
+    if (timing) then
+      r = cudaStreamSynchronize(compute_stream); t0 = MPI_Wtime()
+      r = cudaEventSynchronize(ev_gath(w)); t_gather = t_gather + MPI_Wtime() - t0
+    end if
+    r = cudaStreamWaitEvent(compute_stream, ev_gath(w), 0)
+#endif
+  end subroutine allgather_y_wait
 
   ! transport = 'nccl' needs a build with NCCL=1 and one GPU per rank;
   ! 'auto' takes NCCL when both hold and MPI otherwise.  One rank needs no
@@ -409,8 +440,9 @@ contains
   ! (NCCL) or is started by the host once the compute stream has packed
   ! (MPI); the events order the two streams.  The y exchanges (ghost rows,
   ! reduced systems) go through a second NCCL communicator over the y
-  ! column, on the compute stream itself, or through MPI on the device
-  ! buffers.
+  ! column, the ghost rows on the compute stream itself, the records on
+  ! the communication stream (allgather_y_start), or through MPI on the
+  ! device buffers.
   subroutine setup_transport()
 #ifdef HAVE_NCCL
     type(nccl_unique_id) :: id
@@ -421,13 +453,15 @@ contains
     use_nccl_y = .false.
     if (transpose_is_local .and. npy == 1) return
 #ifdef HAVE_CUDA
-    if (.not. transpose_is_local) then
-      ierr = cudaStreamCreateWithFlags(comm_stream, cudaStreamNonBlocking)
-      ierr = cudaEventCreateWithFlags(ev_packed(1), cudaEventDisableTiming)
-      ierr = cudaEventCreateWithFlags(ev_packed(2), cudaEventDisableTiming)
-      ierr = cudaEventCreateWithFlags(ev_done(1), cudaEventDisableTiming)
-      ierr = cudaEventCreateWithFlags(ev_done(2), cudaEventDisableTiming)
-    end if
+    ierr = cudaStreamCreateWithFlags(comm_stream, cudaStreamNonBlocking)
+    ierr = cudaEventCreateWithFlags(ev_packed(1), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_packed(2), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_done(1), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_done(2), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_rec(1), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_rec(2), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_gath(1), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_gath(2), cudaEventDisableTiming)
 #endif
     if (transport /= 'mpi') then
 #ifdef HAVE_NCCL
@@ -455,6 +489,7 @@ contains
             call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
           end if
           nccl_ystream = transfer(compute_stream, nccl_ystream)
+          nccl_stream = transfer(comm_stream, nccl_stream)
           use_nccl_y = .true.
         end if
       else if (transport == 'nccl') then

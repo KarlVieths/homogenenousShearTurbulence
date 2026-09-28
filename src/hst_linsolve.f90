@@ -56,7 +56,12 @@
 ! row).  Storage is interleaved, line index first (U1(iline, iy)), so that
 ! the threads of a kernel read consecutive addresses.  Lines are processed
 ! in batches of line_chunk x columns (deck parameter; 0 = all columns at
-! once on the GPU, 16 on the CPU) to bound that workspace.
+! once on the GPU, 16 on the CPU) to bound that workspace.  With more than
+! one slab there are two workspaces and the forward sweep of a batch is
+! issued before the backward sweep of the previous one, so that the
+! allgather of the previous records (on the communication stream,
+! hst_mpi) runs behind the sweep; the default is then two batches when
+! each still fills the GPU (init_linsolve).
 !
 ! (The system kind is called `sys` and the substituted right-hand side
 !  `XR` here, where main has `kind` and `X`: with hst_mpi, a CUDA Fortran
@@ -83,10 +88,11 @@ module hst_linsolve
   ! cph = conjg(ph) for the first slab and 1 otherwise; then the right-hand
   ! sides of the two border rows (4).
   integer(C_INT), parameter :: NREC = 28
+  integer(C_INT), parameter :: LINES_FULL = 108*128         ! lines that fill the GPU (init_linsolve)
   real(C_DOUBLE), allocatable, save :: U1(:, :), U2(:, :), B1(:, :), B2(:, :)
   complex(C_DOUBLE_COMPLEX), allocatable, save :: XR(:, :)
   real(C_DOUBLE), allocatable, save :: record(:, :, :)        ! record(NREC, line, slab)
-  integer(C_INT), save :: nlines_max, chunk
+  integer(C_INT), save :: nlines_max, chunk, nws, ldw    ! lines per batch; workspaces (2 with slabs); lines of all workspaces
 
 contains
 
@@ -101,15 +107,23 @@ contains
 #ifdef HAVE_CUDA
     chunk = nxB
 #endif
+    ! with slabs, two batches when each still fills the GPU (one thread per
+    ! line, LINES_FULL = the A100's 108 SMs x 128 threads), so that the
+    ! gather of one batch's records hides behind the other's sweep: at
+    ! 512^3 on 8 A100 the two-node step gains 4%, at 256^3 the halved
+    ! batch would cost more than the overlap gains (FINDINGS.md, session 9)
+    if (npy > 1 .and. (2*nz + 1)*nxB/2 >= LINES_FULL) chunk = (nxB + 1)/2
     if (line_chunk > 0) chunk = line_chunk
     chunk = min(chunk, nxB)
     nlines_max = (2*nz + 1)*chunk
-    allocate (U1(nlines_max, 0:nyB - 1), U2(nlines_max, 0:nyB - 1), B1(nlines_max, 0:nyB - 1), B2(nlines_max, 0:nyB - 1))
-    allocate (XR(nlines_max, 0:nyB - 1), record(NREC, nlines_max, 0:npy - 1))
+    nws = 1; if (npy > 1) nws = 2
+    ldw = nws*nlines_max
+    allocate (U1(ldw, 0:nyB - 1), U2(ldw, 0:nyB - 1), B1(ldw, 0:nyB - 1), B2(ldw, 0:nyB - 1))
+    allocate (XR(ldw, 0:nyB - 1), record(NREC, ldw, 0:npy - 1))
     U1 = 0; U2 = 0; B1 = 0; B2 = 0; XR = 0; record = 0
     !$omp target enter data map(to: U1, U2, B1, B2, XR, record)
-    if (has_terminal) write (*, '(A,I0,A,I0,A,F8.1,A)') '   line solver: batches of ', chunk, ' x columns, ', &
-      nlines_max, ' lines, workspace ', (48.0d0*nyB + 8.0d0*NREC*npy)*nlines_max/1024.0d0**2, ' MB per rank'
+    if (has_terminal) write (*, '(A,I0,A,I0,A,I0,A,F8.1,A)') '   line solver: batches of ', chunk, ' x columns, ', &
+      nlines_max, ' lines, ', nws, ' workspace(s) of ', (48.0d0*nyB + 8.0d0*NREC*npy)*nlines_max/1024.0d0**2, ' MB per rank'
   end subroutine init_linsolve
 
   subroutine free_linsolve()
@@ -131,15 +145,14 @@ contains
   ! KIND_D2V is singular and is set to zero; that of KIND_POISSON is
   ! singular too and dst is left untouched there for the caller.
   subroutine line_solve(sys, lambda, src, dst, shift_x, shift_z)
-    use hst_mpi, only: allgather_y
+    use hst_mpi, only: allgather_y_start, allgather_y_wait
     integer(C_INT), intent(in) :: sys
     real(C_DOUBLE), intent(in) :: lambda
     complex(C_DOUBLE_COMPLEX), intent(in), contiguous :: src(ny0 - 2:, -nz:, nx0:)
     complex(C_DOUBLE_COMPLEX), intent(inout), contiguous :: dst(ny0 - 2:, -nz:, nx0:)
     real(C_DOUBLE), intent(in), optional :: shift_x, shift_z
-    integer(C_INT) :: ix0, ix1, nl, ix, iz, iy, il, ncol, n, m, ld, nslab, islab
+    integer(C_INT) :: b, nbatch, ncol, n, m, nslab, islab
     real(C_DOUBLE) :: sx, sz
-    complex(C_DOUBLE_COMPLEX) :: ph
 
     if (present(shift_x)) then
       sx = shift_x; sz = shift_z
@@ -149,30 +162,59 @@ contains
     ncol = 2*nz + 1
     n = ny
     m = nyB
-    ld = nlines_max
     nslab = npy
     islab = ipy
-    do ix0 = nx0, nxN, chunk
+    nbatch = (nxB + chunk - 1)/chunk
+    ! batch b: forward sweep into workspace mod(b, nws), gather of its
+    ! records; then the wait and the backward sweep of batch b - nws + 1
+    ! (with one workspace the same batch, with two the previous one)
+    do b = 0, nbatch + nws - 2
+      if (b < nbatch) then
+        call forward_sweep(b)
+        call allgather_y_start(record, mod(b, nws)*nlines_max + 1, nlines_max, mod(b, nws) + 1)
+      end if
+      if (b >= nws - 1) then
+        call allgather_y_wait(mod(b - nws + 1, nws) + 1)
+        call backward_sweep(b - nws + 1)
+      end if
+    end do
+
+  contains
+
+    ! forward sweep of batch b, one thread per line: factor the slab's
+    ! rows and write its record for the reduced system
+    subroutine forward_sweep(b)
+      integer(C_INT), intent(in) :: b
+      integer(C_INT) :: ix0, ix1, nl, il0, il, ix, iz
+      ix0 = nx0 + b*chunk
       ix1 = min(ix0 + chunk - 1, nxN)
       nl = (ix1 - ix0 + 1)*ncol
-      ! forward sweep, one thread per line: factor the slab's rows and
-      ! write its record for the reduced system
+      il0 = mod(b, nws)*nlines_max
       !$omp target teams distribute parallel do default(none) &
-      !$omp shared(U1, U2, B1, B2, XR, record, src, der, k2, ni, lambda, sys, ix0, nz, nx0, ncol, n, m, ny0, nl, ld, islab) &
+      !$omp shared(U1, U2, B1, B2, XR, record, src, der, k2, ni, lambda, sys, ix0, nz, nx0, ncol, n, m, ny0, nl, ldw, il0, islab) &
       !$omp private(il, ix, iz)
       do il = 1, nl
         ix = ix0 + (il - 1)/ncol
         iz = mod(il - 1, ncol) - nz
         if (.not. (ix == 0 .and. iz == 0 .and. (sys == KIND_D2V .or. sys == KIND_POISSON))) then
-          call penta_forward(sys, lambda, ni, k2(iz, ix), n, m, ny0, ld, il, (iz + nz + 1) + ncol*(ix - nx0), &
-                             der, U1, U2, B1, B2, XR, record(:, il, islab), src)
+          call penta_forward(sys, lambda, ni, k2(iz, ix), n, m, ny0, ldw, il0 + il, (iz + nz + 1) + ncol*(ix - nx0), &
+                             der, U1, U2, B1, B2, XR, record(:, il0 + il, islab), src)
         end if
       end do
-      call allgather_y(record, NREC*ld)
-      ! reduced system and backward sweep, one thread per line
+    end subroutine forward_sweep
+
+    ! reduced system and backward sweep of batch b, one thread per line
+    subroutine backward_sweep(b)
+      integer(C_INT), intent(in) :: b
+      integer(C_INT) :: ix0, ix1, nl, il0, il, ix, iz, iy
+      complex(C_DOUBLE_COMPLEX) :: ph
+      ix0 = nx0 + b*chunk
+      ix1 = min(ix0 + chunk - 1, nxN)
+      nl = (ix1 - ix0 + 1)*ncol
+      il0 = mod(b, nws)*nlines_max
       !$omp target teams distribute parallel do default(none) &
       !$omp shared(U1, U2, B1, B2, XR, record, dst, der, k2, ni, lambda, sys, ix0, nz, nx0, ncol, alfa0, beta0, sx, sz, n, m, ny0, &
-      !$omp        nl, ld, nslab, islab) private(il, ix, iz, iy, ph)
+      !$omp        nl, ldw, il0, nslab, islab) private(il, ix, iz, iy, ph)
       do il = 1, nl
         ix = ix0 + (il - 1)/ncol
         iz = mod(il - 1, ncol) - nz
@@ -182,11 +224,12 @@ contains
           end do
         else if (.not. (ix == 0 .and. iz == 0 .and. sys == KIND_POISSON)) then
           ph = exp(dcmplx(0.0d0, -(alfa0*ix*sx + beta0*iz*sz)))
-          call penta_backward(sys, lambda, ni, k2(iz, ix), ph, n, m, ny0, ld, il, (iz + nz + 1) + ncol*(ix - nx0), nslab, islab, &
-                              der, U1, U2, B1, B2, XR, record, dst)
+          call penta_backward(sys, lambda, ni, k2(iz, ix), ph, n, m, ny0, ldw, il0 + il, (iz + nz + 1) + ncol*(ix - nx0), &
+                              nslab, islab, der, U1, U2, B1, B2, XR, record, dst)
         end if
       end do
-    end do
+    end subroutine backward_sweep
+
   end subroutine line_solve
 
   ! Row iy (global), band entry j of the system `sys` before the wrap phase.
