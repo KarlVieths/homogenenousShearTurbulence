@@ -23,7 +23,10 @@
 #SBATCH --ntasks-per-node=4
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=8
-#SBATCH --time=00:25:00
+#SBATCH --time=00:10:00
+# The limit is the expected length plus a margin, not a round number: shorter
+# jobs backfill sooner.  One root with the default CONFIGS takes 2-3.5 min, a
+# two-root A/B of 7 configs 6.5 min: for that, sbatch --time=00:12:00.
 #SBATCH --output=hst-2node-%j.out
 
 HST_ROOT=${HST_ROOT:-$HOME/hst}
