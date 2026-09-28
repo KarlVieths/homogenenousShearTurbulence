@@ -186,7 +186,7 @@ kernel calls it).
 &physics  re=1000.0, s=1.0, linear=.false. /
 &time     deltat=0.0, cflmax=1.0, t_max=100.0, nstep=1000000,
           dt_stat=0.01, dt_field=10.0, dt_save=10.0, time=0.0,
-          time_from_restart=.false. /
+          time_from_restart=.false., restart_file='Dati.cart.out' /
 &init     amplitude=1.0e-3, seed=1, kpeak=4.0 /
 ```
 

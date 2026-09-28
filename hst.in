@@ -41,6 +41,9 @@
   dt_save = 10.0                ! Dati.cart.out restart interval
   time = 0.0                    ! start time when not restarting
   time_from_restart = .false.
+  restart_file = 'Dati.cart.out'   ! path/name of the binary field read at start-up
+                                    ! (e.g. 'Dati.cart.in.Re2000'); the code always
+                                    ! writes its live checkpoint to Dati.cart.out
   timing = .false.              ! .true.: print the time per phase of the substep at the end
 /
 
