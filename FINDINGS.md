@@ -1182,3 +1182,103 @@ cyclic mapping (`--map-by node`) with `npy = 2` aborts, cyclic with
 2 x 2.  The HoreKA two-node job with `npy = 0` in `CONFIGS` (job
 5168929) is the check that 8 ranks on two A100 nodes come out 4 x 2 and
 4 ranks 4 x 1.
+
+**On two HoreKA A100 nodes (job 5168929, 2026-09-29 night; the branch
+head in `~/hst-exp`, `npy = 0` in every deck).**  8 ranks with `--map-by
+ppr:4:node` come out as "ranks = 8 (4 x-z pencils x 2 y slabs)", 4 ranks
+as 4 x 1; the three regression decks on 8 ranks at `npy = 0` pass at
+5.9e-14 (5.7e-13 the Stokes deck); the bench steps equal those with
+`npy = 2` (0.0232 and 0.1268 s against 0.0233 and 0.1274 in job
+5168845 the same night).  So one deck now runs unchanged on one GPU, on
+the four GPUs of a node and on two nodes, on either branch.
+
+## The fixed cost of the y exchange (2026-09-29, session 9, job 5168845)
+
+The `small` deck (nx = nz = 15, ny = 32) on 8 ranks with two slabs has
+exchanges that carry almost nothing (a ghost exchange 2 rows x 31 x 4
+complex = 4 KB per direction per rank, a record gather 28 x 124 reals =
+28 KB per rank), so its "transfers only" line is the per-exchange
+latency plus the skew between the two slabs.  Same job, `~/hst-y`
+(the branch before `npy = 0`), 50 steps:
+
+| `small` | s/step | ghost rows / step | records / step | per exchange (12 ghosts, 9 gathers) |
+| --- | --- | --- | --- | --- |
+| 8 A100, 2 nodes, 4 x 2 | 0.00674 | 2.49 ms | 2.32 ms | 0.21 ms, 0.26 ms |
+| 4 A100, 1 node, 2 x 2 (NVLink) | 0.00375 | 0.57 ms | 0.51 ms | 0.05 ms, 0.06 ms |
+| 4 A100, 1 node, 4 x 1 | 0.00328 | - | - | - |
+
+So an exchange between the nodes costs 0.2-0.26 ms before any bytes,
+five times the NVLink value; at 256^3 the same job's exchanges cost
+0.41 ms (ghost rows, 4.95 ms / 12) and 0.61 ms (records, 5.51 / 9), so
+about half of the 10.5 ms of y exchange in the 23.3 ms step is this
+fixed part and half scales with the size (bytes at the effective rate,
+and skew that grows with the work), and at 512^3 (9.3 + 15.0 ms) the
+fixed part is a fifth.  The fixed part is out of reach of the levers
+below (fewer exchanges would need the two-field ghost exchange, a
+change in the physics files); the size-dependent part is what (a) and
+(c) address.
+
+## Lever (a): one NCCL group for the ghost rows (job 5168929): dropped
+
+The two send/receive pairs of `exchange_ghost_rows` (to the slab above
+and to the slab below; with two slabs the same rank) in one
+`ncclGroupStart/End` instead of two.  Same two nodes, back to back:
+
+| 8 A100, 2 nodes, `npy = 0` | branch head | one group |
+| --- | --- | --- |
+| bench_256 s/step | 0.02323 | 0.02369 |
+| its ghost rows per step | 4.88 ms | 5.13 ms |
+| bench_512 s/step | 0.12683 | 0.12740 |
+| its ghost rows per step | 8.92 ms | 10.93 ms |
+| `small` s/step | 0.00779 | 0.00786 |
+
+A wash at 256^3, worse at 512^3 (the one-node rows within 1.5%); the
+cost of a ghost exchange is not per NCCL kernel.  Dropped (the
+worktree and the branch `lever-a` deleted).
+
+## Lever (c): the records' gather behind the next batch's sweep (job 5168954): kept
+
+`allgather_y` became `allgather_y_start` and `allgather_y_wait`
+(`hst_mpi`): the gather of one solver batch's records is issued on the
+communication stream after an event recorded on the compute stream
+(`ev_rec`), and the compute stream waits for its completion event
+(`ev_gath`) only before that batch's backward sweep, so the forward
+sweep of the next batch runs while the records travel and the host
+never blocks.  A workspace's blocks are not contiguous over the slabs,
+so the gather is one send and one receive per other slab in a group
+(NCCL) or a shift loop of `MPI_Sendrecv` (MPI; a first version paired
+each rank with `ipy + s` on both sides and deadlocked at four slabs).
+`hst_linsolve` keeps two workspaces when `npy > 1` (the line index
+offset by `nlines_max`, so the device routines are untouched) and
+`line_solve` runs the batches as a two-deep pipeline (forward sweep of
+batch b+1 before the backward sweep of b; with one workspace the loop
+degenerates to forward, gather, backward).  The number of batches
+stays `line_chunk`'s, and the default is two batches when each still
+fills the GPU (`LINES_FULL` = 108 SMs x 128 threads, one thread per
+line: 512^3 on four pencils has 32704 lines per rank, 256^3 8160), else
+one.  The `timing` line now reports the *exposed* part of the gather.
+Same two nodes, back to back, `lc<N>` = `line_chunk = N` (16 or 32 =
+two batches, 16 at 512^3 four):
+
+| 8 A100, 2 nodes, `npy = 0` | branch head, 1 batch | head, 2 batches | lever (c), 1 batch | lever (c), 2 batches | lever (c), 4 batches |
+| --- | --- | --- | --- | --- | --- |
+| bench_256 s/step | 0.02347 | 0.02574 | 0.02317 | 0.02356 | |
+| records per step | 6.05 ms | 6.40 | 3.36 (exposed) | 1.59 (exposed) | |
+| implicit solves per step | 4.24 ms | 5.86 | 3.83 | 4.13 | |
+| bench_512 s/step | 0.12702 | 0.12775 | 0.12727 | **0.12181** | 0.12250 |
+| records per step | 15.58 ms | 14.21 | 11.72 (exposed) | 4.61 (exposed) | 2.95 (exposed) |
+| implicit solves per step | 15.97 ms | 16.49 | 15.89 | 12.46 | 13.16 |
+
+At 512^3 two batches hide 11 of the 15.6 ms of records and the step
+gains 4% (0.1270 to 0.1218 s; the 8-GPU 512^3 rows of five runs across
+three jobs that night spread 0.1268-0.1274, so the gain is well outside
+the noise); the one-node rows are a wash (0.2159 / 0.2157 s at 512^3,
+0.0300 / 0.0305 at 256^3, within the 2% the 4-GPU 256^3 row moves
+between jobs).  At 256^3 the halved batch costs more in the sweeps
+(4080 lines, 32 blocks of 128 threads on 108 SMs) than the overlap
+hides, so one batch stays there, and the default rule says so.  Two
+A100 nodes are now 1.77x one node at 512^3 (1.70 in the same job
+before) and 1.29x at 256^3.  Of the 121.8 ms step at 512^3 the y
+exchange still shows 8.6 ms of ghost rows and 4.6 ms of exposed records
+(11%); at 256^3 4.7 + 1.6 of 23.6 ms (27%), mostly the fixed cost
+measured above.  Kept: merged into `multinode-y`.
