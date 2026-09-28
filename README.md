@@ -150,11 +150,11 @@ Seconds per full time step (three substeps), `examples/bench_*.in`, after
 the solver-latency session of FINDINGS.md (in brackets: after the
 line-solver and overlap session, and after the transpose-kernel session):
 
-| grid (dealiased) | 1 x A100 | 4 x A100 | 1 x RTX 3060 | istmio2 CPU, 4 ranks |
-| --- | --- | --- | --- | --- |
-| 64 x 128 x 64 | 0.0117 (0.0134, 0.0145) | | 0.109 (0.127, 0.127) | 0.70 (0.89, 0.89) |
-| 256 x 256 x 256 | 0.082 (0.087, 0.099) | 0.030 (0.034, 0.039) | 0.85 (0.98, 0.98) | |
-| 512 x 512 x 512 | 0.646 (0.687, 0.819) | 0.216 (0.227, 0.262) | | |
+| grid (dealiased) | 1 x A100 | 4 x A100 | 2 x 4 A100, branch `multinode-y` | 1 x RTX 3060 | istmio2 CPU, 4 ranks |
+| --- | --- | --- | --- | --- | --- |
+| 64 x 128 x 64 | 0.0117 (0.0134, 0.0145) | | | 0.109 (0.127, 0.127) | 0.70 (0.89, 0.89) |
+| 256 x 256 x 256 | 0.082 (0.087, 0.099) | 0.030 (0.034, 0.039) | 0.0235 | 0.85 (0.98, 0.98) | |
+| 512 x 512 x 512 | 0.646 (0.687, 0.819) | 0.216 (0.227, 0.262) | 0.126 | | |
 
 Four A100 use the NCCL transport (`make GPU=1 NCCL=1`); with MPI's
 alltoall the 4-GPU step is 2.5-3x longer (FINDINGS.md).  The RTX 3060
@@ -170,10 +170,14 @@ of every alltoall then crosses the node's single InfiniBand link at its
 wire rate (GPUDirect RDMA, NUMA binding and a two-level alltoall were
 measured and do not help), so a second node needs the y decomposition:
 the branch `multinode-y` (`npy` slabs in y, one per node, the alltoalls
-inside the node, the line solves coupled by a small reduced system;
-DESIGN.md 7 (i), FINDINGS.md "The y decomposition").  It is validated on
-the ISTM boxes with two and four slabs; its two-node numbers on HoreKA are
-the next session's task (NEXT_SESSION.md).
+inside the node, the line solves coupled by a small reduced system, the
+ghost rows and the reduced systems exchanged through a second NCCL
+communicator over the y column; DESIGN.md 7 (i), FINDINGS.md "The y
+decomposition").  With `npy = 2` two nodes are 1.28x one node at 256^3
+and 1.72x at 512^3 (the column above); what remains is the fixed cost
+of the 21 y exchanges of a step, about 0.5 ms each across the nodes
+(FINDINGS.md has the levers left).  On one node the x-z pencils stay
+(2 x 2 is 10-20% slower than 4 x 1).
 
 ## Status
 
@@ -182,7 +186,7 @@ the next session's task (NEXT_SESSION.md).
 | numerics, GPU, pressure, CPL files, S2, Stokes layer | done and validated (FINDINGS.md) |
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
 | NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
-| y decomposition | on the branch `multinode-y` (DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU, two-node timing pending (NEXT_SESSION.md); `main` stays `npy = 1` |
+| y decomposition | on the branch `multinode-y` (DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.28x (256^3) and 1.72x (512^3) one node (FINDINGS.md); `main` stays `npy = 1` |
 | safety net | `tests/run_tests.sh` (12 runs) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
