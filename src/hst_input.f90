@@ -24,7 +24,7 @@ contains
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
-    ly = 2.0d0; alfa0 = 2.0d0*PI/3.0d0; beta0 = 2.0d0*PI; ystretch = 0.0d0; line_chunk = 0; transport = 'auto'; npy = 1
+    ly = 2.0d0; alfa0 = 2.0d0*PI/3.0d0; beta0 = 2.0d0*PI; ystretch = 0.0d0; line_chunk = 0; transport = 'auto'; npy = 0
     re = 1000.0d0; S = 1.0d0; linear = .false.; exact_shift = .false.
     s2_amplitude = 0.0d0; s2_period = 0.0d0; s2_start = 0.0d0
     sl_amplitude = 0.0d0; sl_period = 1.0d0; sl_delta = 0.02d0; sl_start = 0.0d0; sl_bodyforce = .true.; sl_ramp = .false.

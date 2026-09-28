@@ -120,6 +120,7 @@ contains
   subroutine setup_decomposition()
     integer(C_SIZE_T) :: n
 
+    if (npy == 0) npy = 1          ! npy = 0, the default: the code chooses; here that is one slab
     if (npy /= 1) then
       if (has_terminal) print *, 'ERROR: npy > 1 (the y decomposition) is on the branch multinode-y'
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)

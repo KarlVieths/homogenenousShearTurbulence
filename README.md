@@ -32,10 +32,14 @@ The CPL code calls that direction `z` (and its `w` is our `v`).
 Stored modes are `0..nx` in `x` and `-nz..nz` in `z`; `ny` uniform points
 span `ly` in `y`.  The number of MPI ranks must divide both `nx+1` and
 `nzd` (`3*nz` rounded up to a power of two times at most one factor 3).
-Each rank owns all of `y` (one GPU per rank, x-z pencils; `npy = 1`).  The
-y decomposition for several nodes is on the branch `multinode-y`, which
-differs from `main` in the parallel layer only (`hst_mpi`, `hst_linsolve`,
-`hst_io`): the physics files are written for any `npy` (DESIGN.md 7 (i)).
+Each rank owns all of `y` (one GPU per rank, x-z pencils).  The y
+decomposition for several nodes is on the branch `multinode-y`, which
+differs from `main` in the parallel layer only (`hst_mpi`, `hst_linsolve`):
+the physics files are written for any number of y slabs `npy` (DESIGN.md
+7 (i)).  `npy` in `&mesh` defaults to 0, "the code chooses": one slab on
+`main`, one slab per node on the branch when that fits the grid (else one);
+the same deck and the same field files run on both branches, on one GPU,
+on the GPUs of a node and on several nodes.
 
 ## Build
 
@@ -192,7 +196,7 @@ of the 21 y exchanges of a step, about 0.5 ms each across the nodes
 | numerics, GPU, pressure, CPL files, S2, Stokes layer | done and validated (FINDINGS.md) |
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
 | NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
-| y decomposition | on the branch `multinode-y` (DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.28x (256^3) and 1.72x (512^3) one node (FINDINGS.md); `main` stays `npy = 1` |
+| y decomposition | on the branch `multinode-y` (DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.28x (256^3) and 1.72x (512^3) one node (FINDINGS.md); `npy = 0` (default) lets the code choose, `main` takes one slab |
 | safety net | `tests/run_tests.sh` (12 runs) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
