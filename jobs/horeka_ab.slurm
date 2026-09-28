@@ -12,7 +12,8 @@
 #SBATCH --ntasks-per-node=4
 #SBATCH --gres=gpu:4
 #SBATCH --cpus-per-task=8
-#SBATCH --time=00:30:00
+#SBATCH --time=00:10:00
+# expected length plus a margin (the runs take 2-5 min): shorter jobs backfill sooner
 #SBATCH --output=hst-ab-%j.out
 
 A_ROOT=${A_ROOT:-$HOME/hst}
