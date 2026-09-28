@@ -28,6 +28,7 @@ program hst
   use hst_transforms
   use hst_equations
   use hst_io
+  use hst_initial, only: generate_initial_field
   use hst_stats
   use hst_pressure
   use hst_stokes
@@ -64,7 +65,12 @@ program hst
   call init_linsolve()
   call setup_derivatives()
   call make_output_dirs()
-  call restart_read('Dati.cart.out')
+  if (restart_from_file) then
+    call restart_read(trim(restart_file))    ! loads the file, or generates a field if it is absent
+  else
+    if (has_terminal) print *, '   restart_from_file = .false.: generating initial field'
+    call generate_initial_field()
+  end if
   !$omp target update to(V)
   call stokes_setup()
   call stokes_apply()

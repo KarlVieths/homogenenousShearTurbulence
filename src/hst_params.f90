@@ -48,7 +48,9 @@ module hst_params
   real(C_DOUBLE), save :: wall_max                  ! wall-clock limit of the run in seconds (0 = none)
   real(C_DOUBLE), save :: time, time0 = 0.0d0
   integer(C_SIZE_T), save :: nstep, istep = 0, ifield = 0
-  logical, save :: time_from_restart
+  logical, save :: time_from_restart          ! if .true., adopt the clock from the restart file header
+  logical, save :: restart_from_file          ! if .true., start from restart_file (else generate initial field)
+  character(len=256), save :: restart_file    ! input field to read at start-up (hst_io); output is always Dati.cart.out
   logical, save :: timing                     ! per-phase timer (hst_timer)
 
   !------------------------------------------------------ initial field ----

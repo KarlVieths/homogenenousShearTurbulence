@@ -76,9 +76,12 @@ mpirun -np 4 /path/to/build-cpu/hst          # or build-gpu/hst, one rank per GP
 sbatch ~/hst/jobs/horeka_gpu.slurm           # HoreKA, 1 node, 4 GPUs
 ```
 
-If `Dati.cart.out` exists it is read (with `time_from_restart = .true.`
-the clock too); a field written by the CPL code works as well.  Otherwise
-a seeded, divergence-free random field is generated (`&init`).
+If the field named by `restart_file` in `&time_control` exists (default
+`Dati.cart.out`) it is read (with `time_from_restart = .true.` the clock
+too); a field written by the CPL code works as well.  Point `restart_file`
+at any CPL-format velocity field (e.g. `Dati.cart.in.Re2000`) to start from
+it instead; the code always writes its live checkpoint to `Dati.cart.out`.
+Otherwise a seeded, divergence-free random field is generated (`&init`).
 
 A production run goes in segments: `wall_max` in `&time_control` (seconds
 of wall-clock time, 0 = none) ends the run cleanly with its restart file,
