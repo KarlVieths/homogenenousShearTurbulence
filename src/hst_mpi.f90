@@ -52,7 +52,7 @@ module hst_mpi
   implicit none
   private
 
-  public :: setup_decomposition, free_mpi, exchange_ghost_rows, allgather_y
+  public :: setup_decomposition, free_mpi, exchange_ghost_rows, allgather_y, NPY_MAX
   public :: transpose_zTOx_start, transpose_zTOx_finish, transpose_xTOz_start, transpose_xTOz_finish
 
   ! the two buffer pairs of the double buffering
@@ -61,6 +61,8 @@ module hst_mpi
   !$omp declare target(sendcount)
   logical, save :: transpose_is_local
   logical, save :: use_nccl = .false., use_nccl_y = .false.   ! NCCL for the alltoall (comm_xz); for the y exchanges (comm_y)
+  integer, save :: node_ranks                                   ! ranks per node (setup_decomposition)
+  integer(C_INT), parameter :: NPY_MAX = 8                      ! slabs per line: the reduced system is at most 16 x 16 (hst_linsolve)
   type(MPI_Request), save :: req(2)
 #ifdef HAVE_CUDA
   integer(kind=cuda_stream_kind), save :: compute_stream, comm_stream
@@ -139,10 +141,38 @@ contains
   ! both splits to be even), and npy slabs own nyB = ny/npy rows each (at
   ! least 8, so that the line solver's four rows next to the borders are
   ! distinct).  The npxz ranks of a slab are consecutive: ipy = iproc/npxz,
-  ! ipxz = mod(iproc, npxz).
+  ! ipxz = mod(iproc, npxz).  npy = 0 (the default) lets the code choose:
+  ! one slab per node when that fits the grid, so that every alltoall stays
+  ! inside a node, otherwise one slab.  With more than one slab the ranks
+  ! of a node must be consecutive in MPI_COMM_WORLD, as mpirun --map-by
+  ! ppr:N:node and Slurm's block distribution give.
   subroutine setup_decomposition()
     integer(C_SIZE_T) :: n
+    type(MPI_Comm) :: node
+    integer :: node_rank, nnodes, npxz_node
+    logical :: consecutive
 
+    call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, node, ierr)
+    call MPI_Comm_size(node, node_ranks, ierr)
+    call MPI_Comm_rank(node, node_rank, ierr)
+    call MPI_Comm_free(node, ierr)
+    call MPI_Allreduce(MPI_IN_PLACE, node_ranks, 1, MPI_INTEGER, MPI_MAX, MPI_COMM_WORLD, ierr)
+    consecutive = (node_rank == mod(iproc, node_ranks))
+    call MPI_Allreduce(MPI_IN_PLACE, consecutive, 1, MPI_LOGICAL, MPI_LAND, MPI_COMM_WORLD, ierr)
+    consecutive = consecutive .and. mod(nproc, node_ranks) == 0      ! the same number of ranks on every node
+    nnodes = nproc/node_ranks
+    if (npy == 0) then
+      npy = 1
+      npxz_node = nproc/nnodes
+      if (consecutive .and. nnodes > 1 .and. nnodes <= NPY_MAX .and. mod(ny, nnodes) == 0 .and. ny/nnodes >= 8 &
+          .and. mod(nx + 1, npxz_node) == 0 .and. mod(nzd, npxz_node) == 0) npy = nnodes
+      if (has_terminal .and. nnodes > 1 .and. npy == 1) write (*, '(A,I0,A)') &
+        '   npy = 0: one slab per node (', nnodes, ' nodes) does not fit this grid or rank layout, taking one slab'
+    else if (npy > 1 .and. .not. consecutive) then
+      if (has_terminal) print *, 'ERROR: with npy > 1 every node must hold the same number of ranks, consecutive in', &
+        ' MPI_COMM_WORLD (mpirun --map-by ppr:N:node, Slurm block distribution)'
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
     if (npy < 1 .or. mod(nproc, npy) /= 0 .or. mod(ny, npy) /= 0 .or. ny/max(npy, 1) < 8) then
       if (has_terminal) then
         print *, 'ERROR: npy must divide nproc and ny, with at least 8 rows per slab.'
@@ -384,8 +414,7 @@ contains
   subroutine setup_transport()
 #ifdef HAVE_NCCL
     type(nccl_unique_id) :: id
-    type(MPI_Comm) :: node
-    integer :: node_ranks, r
+    integer :: r
 #endif
     character(len=4) :: xz_name, y_name
     use_nccl = .false.
@@ -402,10 +431,6 @@ contains
 #endif
     if (transport /= 'mpi') then
 #ifdef HAVE_NCCL
-      call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, node, ierr)
-      call MPI_Comm_size(node, node_ranks, ierr)
-      call MPI_Comm_free(node, ierr)
-      call MPI_Allreduce(MPI_IN_PLACE, node_ranks, 1, MPI_INTEGER, MPI_MAX, MPI_COMM_WORLD, ierr)
       if (node_ranks <= omp_get_num_devices()) then
         r = cudaSetDevice(omp_get_default_device())
         if (.not. transpose_is_local) then

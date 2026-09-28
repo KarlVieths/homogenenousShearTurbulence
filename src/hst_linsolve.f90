@@ -67,6 +67,7 @@ module hst_linsolve
   use, intrinsic :: iso_c_binding
   use hst_params
   use hst_derivatives, only: shear_shifts
+  use hst_mpi, only: NPY_MAX
 
   implicit none
   private
@@ -75,7 +76,6 @@ module hst_linsolve
 
   ! the systems line_solve assembles (see there)
   integer(C_INT), parameter :: KIND_D2V = 1, KIND_ETA = 2, KIND_POISSON = 3, KIND_D0 = 4, KIND_DY = 5
-  integer(C_INT), parameter :: NPY_MAX = 8          ! slabs per line: the reduced system is at most 16 x 16
   ! The record of a slab for the reduced system, per line: for each of the
   ! rows 0, 1, m-2, m-1 (in this order, 6 reals each) the value x (2), then
   ! the coefficients p, q of b_{s-1} and t, u of b_s in
