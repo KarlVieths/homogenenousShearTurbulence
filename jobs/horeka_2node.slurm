@@ -10,6 +10,7 @@
 #   cd ~/hst && sbatch --partition=accelerated jobs/horeka_2node.slurm     (HST_ROOT, RUNS, CONFIGS, NPY_REG overridable;
 #                                                                            dev_accelerated has 3 nodes and rarely two free)
 #   sbatch ... --export=ALL,HST_ROOT=$HOME/hst-y,NPY_REG=2,CONFIGS="4:bench_256:20:nccl:none:1 4:bench_256:20:nccl:none:2 8:bench_256:20:nccl:none:2:info" jobs/horeka_2node.slurm
+#   sbatch ... --export=ALL,ROOTS="$HOME/hst-y $HOME/hst-exp",... jobs/horeka_2node.slurm     (A/B: the builds back to back)
 # CONFIGS lists the runs as ranks:deck:steps:transport:bind:npy[:info]; NCCL_*
 # variables in the environment reach the runs (e.g. NCCL_NET_GDR_LEVEL=SYS
 # lets NCCL use GPUDirect RDMA for GPUs that are not next to the adapter).
@@ -24,6 +25,7 @@
 #SBATCH --output=hst-2node-%j.out
 
 HST_ROOT=${HST_ROOT:-$HOME/hst}
+ROOTS=${ROOTS:-$HST_ROOT}         # the builds to run, back to back, in the same job
 RUNS=${RUNS:-$HOME/hst-runs}
 source $HST_ROOT/env/horeka.sh gpu
 export NCCL_DEBUG=WARN
@@ -46,11 +48,14 @@ run() {  # run <ranks> <deck> <nstep> <transport> <bind: none|numa> <npy> [info]
     mpirun -np $1 --map-by ppr:4:node --bind-to none $wrap $HST_ROOT/build-gpu/hst hst.in | grep -E -A12 "s/step; writing|rror|time per phase|transport|bind_numa"
   fi
 }
-for c in $CONFIGS; do run ${c//:/ }; done
-echo "=== regression decks on 8 ranks, transport nccl, npy $NPY_REG"
-for deck in small small_s2x small_stokes; do
-  d=$RUNS/2node-reg-$deck; mkdir -p $d; cd $d; rm -f Dati.cart.out
-  sed -e "s/&mesh /\&mesh transport = 'nccl', npy = $NPY_REG, /" $HST_ROOT/tests/decks/$deck.in > hst.in
-  mpirun -np 8 --map-by ppr:4:node --bind-to none $HST_ROOT/build-gpu/hst hst.in > run.log 2>&1 || echo "$deck: run failed"
-  echo "--- $deck"; python3 $HST_ROOT/tests/compare_fields.py Dati.cart.out $HST_ROOT/tests/reference/$deck.fld 1e-10 | tail -1
+for HST_ROOT in $ROOTS; do
+  echo "=== build $HST_ROOT"
+  for c in $CONFIGS; do run ${c//:/ }; done
+  echo "=== regression decks on 8 ranks, transport nccl, npy $NPY_REG"
+  for deck in small small_s2x small_stokes; do
+    d=$RUNS/2node-reg-$deck; mkdir -p $d; cd $d; rm -f Dati.cart.out
+    sed -e "s/&mesh /\&mesh transport = 'nccl', npy = $NPY_REG, /" $HST_ROOT/tests/decks/$deck.in > hst.in
+    mpirun -np 8 --map-by ppr:4:node --bind-to none $HST_ROOT/build-gpu/hst hst.in > run.log 2>&1 || echo "$deck: run failed"
+    echo "--- $deck"; python3 $HST_ROOT/tests/compare_fields.py Dati.cart.out $HST_ROOT/tests/reference/$deck.fld 1e-10 | tail -1
+  done
 done
