@@ -1144,3 +1144,41 @@ of expected gain per line of code, all to be measured with `ROOTS` in
 The ghost rows' fixed cost is out of reach without computing the
 interior rows while the exchange is in flight, which is structure in
 the physics files that `main` does not want.
+
+## The layout without user input (2026-09-28, session 9)
+
+**The two branches stay separate and must run the same decks and field
+files.**  `tests/crossbranch.sh <build A> <build B> [nranks] [npy A]
+[npy B]` (on `main`) runs 25 steps of the `small` deck with one build and
+the other 25 with the other, restarted from the first one's
+`Dati.cart.out`, and compares the result with the 50-step reference at
+1e-10.  Between `main` and the branch at `npy = 2`, in both directions,
+the round trip agrees to 2e-14 on the CPU (4 ranks: 2 x 2 on the branch)
+and 6e-14 on the two A6000 of istmcetus (1 pencil x 2 slabs through
+NCCL on the y column), i.e. at the regression's own level: the file
+written by either branch (interior rows plus the four ghost rows, each
+slab writing its own on the branch) restarts the other exactly.
+
+**`npy = 0`, the default, means "the code chooses".**  On `main` it is
+one slab (one line in `setup_decomposition`); on the branch
+`setup_decomposition` counts the ranks per node
+(`MPI_Comm_split_type(MPI_COMM_TYPE_SHARED)`, once, also for
+`setup_transport`) and takes one slab per node when every node holds the
+same number of ranks, consecutive in `MPI_COMM_WORLD` (what `mpirun
+--map-by ppr:N:node` and Slurm's block distribution give), the number
+of nodes is at most 8 (`NPY_MAX`, the reduced system's size) and divides
+`ny` with at least 8 rows per slab, and the pencils per node divide
+`nx+1` and `nzd`; otherwise one slab, with a one-line notice when there
+is more than one node.  An explicit `npy > 1` on ranks that are not
+node-consecutive aborts with a message naming the two launch options,
+since such a layout would put a slab's alltoall across the nodes.  About
+30 lines in `hst_mpi`, nothing in the physics files or the job scripts.
+Checked on one node (istmcetus, two GPUs: 2 pencils x 1 slab, the tests
+and regressions at 1, 2 and 4 slabs unchanged on CPU, GPU and NCCL) and
+on two real nodes with the CPU build across istmio2 and istmcetus
+(system OpenMPI, 2 ranks each): block mapping and `npy = 0` give 2 x 2,
+cyclic mapping (`--map-by node`) with `npy = 2` aborts, cyclic with
+`npy = 0` prints the notice and runs 4 x 1, block with `npy = 2` runs
+2 x 2.  The HoreKA two-node job with `npy = 0` in `CONFIGS` (job
+5168929) is the check that 8 ranks on two A100 nodes come out 4 x 2 and
+4 ranks 4 x 1.
