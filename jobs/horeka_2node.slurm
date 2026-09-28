@@ -11,7 +11,8 @@
 #                                                                            dev_accelerated has 3 nodes and rarely two free)
 #   sbatch ... --export=ALL,HST_ROOT=$HOME/hst-y,NPY_REG=2,CONFIGS="4:bench_256:20:nccl:none:1 4:bench_256:20:nccl:none:2 8:bench_256:20:nccl:none:2:info" jobs/horeka_2node.slurm
 #   sbatch ... --export=ALL,ROOTS="$HOME/hst-y $HOME/hst-exp",... jobs/horeka_2node.slurm     (A/B: the builds back to back)
-# CONFIGS lists the runs as ranks:deck:steps:transport:bind:npy[:info]; NCCL_*
+# CONFIGS lists the runs as ranks:deck:steps:transport:bind:npy[:info] (a deck
+# of examples/ or of tests/decks/, e.g. small for the fixed cost of the y exchange); NCCL_*
 # variables in the environment reach the runs (e.g. NCCL_NET_GDR_LEVEL=SYS
 # lets NCCL use GPUDirect RDMA for GPUs that are not next to the adapter).
 #SBATCH --job-name=hst-2node
@@ -36,8 +37,9 @@ scontrol show hostnames $SLURM_JOB_NODELIST | paste -sd' '
 echo "=== topology of $(hostname)"; nvidia-smi topo -m | head -12; numactl -H | grep -E "available|cpus" | cut -c1-80
 run() {  # run <ranks> <deck> <nstep> <transport> <bind: none|numa> <npy> [info]
   d=$RUNS/2node-$2-np$1-npy$6; mkdir -p $d; cd $d; rm -f Dati.cart.out Runtimedata
+  deck=$HST_ROOT/examples/$2.in; [ -f $deck ] || deck=$HST_ROOT/tests/decks/$2.in     # a benchmark or a test deck
   sed -e "s/nstep = [0-9]*/nstep = $3/" -e "s/time_from_restart = .false./time_from_restart = .false., timing = .true./" \
-      -e "s/&mesh /\&mesh transport = '$4', npy = $6, /" $HST_ROOT/examples/$2.in > hst.in
+      -e "s/&mesh /\&mesh transport = '$4', npy = $6, /" $deck > hst.in
   wrap=; [ "$5" = numa ] && wrap=$HST_ROOT/jobs/bind_numa.sh
   echo "=== $2 on $1 GPU(s), $3 steps, transport $4, bind $5, npy $6 $7"
   if [ "$7" = info ]; then
