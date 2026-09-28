@@ -50,9 +50,9 @@ run() {  # run <ranks> <deck> <nstep> <transport> <bind: none|numa> <npy> [info|
   if [ "$7" = info ]; then
     NCCL_DEBUG=INFO NCCL_DEBUG_SUBSYS=INIT,NET mpirun -np $1 --map-by ppr:4:node --bind-to none $wrap $HST_ROOT/build-gpu/hst hst.in > run.log 2>&1
     grep -E "NCCL version|NET/IB : Using|Using network|via NET|GDRDMA|NCCL INFO Channel 00/0" run.log | sed 's/.*NCCL INFO //' | sort | uniq -c | sort -rn | head -12
-    grep -E -A12 "s/step; writing|rror|time per phase|transport|bind_numa" run.log
+    grep -E -A12 "s/step; writing|rror|time per phase|ranks =|transport|bind_numa" run.log
   else
-    mpirun -np $1 --map-by ppr:4:node --bind-to none $wrap $HST_ROOT/build-gpu/hst hst.in | grep -E -A12 "s/step; writing|rror|time per phase|transport|bind_numa"
+    mpirun -np $1 --map-by ppr:4:node --bind-to none $wrap $HST_ROOT/build-gpu/hst hst.in | grep -E -A12 "s/step; writing|rror|time per phase|ranks =|transport|bind_numa"
   fi
 }
 for HST_ROOT in $ROOTS; do
