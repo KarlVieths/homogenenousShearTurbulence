@@ -138,6 +138,12 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
 - `test_stokes`: the mean profile of a body-force-driven Stokes layer
   against the analytic layer after the prescription window (2.3e-5).
 
+`tests/crossbranch.sh <build A> <build B> [nranks] [npy A] [npy B]` runs
+25 steps of the small deck with one build and the other 25 with the other,
+restarted from its `Dati.cart.out`, against the 50-step reference: the
+round trip between `main` and the branch `multinode-y` (either way, the
+branch at `npy = 2`) agrees to 1e-13.
+
 The full solver agrees between CPU and GPU to 1e-13 after 50 steps, and
 runs with different rank counts are bit-identical on the GPU.  Against the
 CPL code `hst-main` from an identical start the box energy agrees to 5e-5
