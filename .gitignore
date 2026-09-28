@@ -67,5 +67,9 @@ vcpkg_installed/
 Testing/
 .cache/
 
+# python bytecode source files
+*.pyc
+*/__pycache__/
+
 # run directory
 run/
