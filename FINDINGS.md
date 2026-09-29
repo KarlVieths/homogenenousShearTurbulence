@@ -1397,3 +1397,25 @@ left in the queue; if the nodes come back it runs the two-node configs
 with the H100 build into `~/hst-runs/scal-h2`.  Whether the 94 GB H100
 holds 1024^3 on one node (estimated 75 GB per GPU) is part of what it
 would measure.
+
+## The merge of `multinode-y` into `main` (2026-09-29, session 11)
+
+With the scaling numbers in (the y exchange is 2.5% of the 1024^3 step)
+the user decided to merge: `xz-parallel` tags `main` before the merge
+(x-z pencils only, 7422b43), `xyz-parallel` the merge commit (61c5ab1,
+`git merge --no-ff multinode-y`, 648 insertions in `hst_mpi.f90` and
+`hst_linsolve.f90`, nothing else).  `main` now runs `npy` slabs, `npy =
+0` choosing one per node; `tests/crossbranch.sh` with the same build
+twice is the restart test between `npy` values.  Safety net on the
+merged `main`, all green: CPU (istmio2, gfortran) `run_tests.sh` at 2,
+4 x 2 and 4 x 4 ranks, `regression.sh` at 2 and 4 x 2 (3e-14),
+`crossbranch.sh build-cpu build-cpu 4 1 2` and `4 2 1` (2e-14); GPU
+(RTX 3060) `run_tests.sh` at 2 and 2 x 2, `regression.sh` at 1, 2 and
+2 x 2 (6e-14); NCCL (istmcetus, two A6000) `run_tests.sh` at 2 x 2 and
+2, `regression.sh` at 2 x 2 and 2 (7e-14), the restart round trips 1 ->
+2 and 2 -> 1 (6e-14).  HoreKA `~/hst` is the merged `main`, rebuilt
+(`GPU_ARCH=cc80 NCCL=1`); `jobs/horeka_tests.slurm` with `NPY=2` on
+four A100 is job 5170308.  The branch `multinode-y` stays as a name for
+the same commits; its HoreKA copies (`~/hst-y`, `~/hst-exp`,
+`~/hst-exp2`) are now the code of `main` minus the docs.
+
