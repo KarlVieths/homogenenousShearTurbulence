@@ -1,4 +1,4 @@
-# Next session: what is left of the y exchange, or something else
+# Next session: lever (b), one ghost exchange for two fields
 
 Copy the block at the end as the opening message of the next session.
 
@@ -40,34 +40,74 @@ transport:bind:npy[:info|:lc<N>]`, a deck of `examples/` or
 printed; time limits are the expected length plus a margin (a 2-root
 A/B of 7 configs took 7.6 min): shorter jobs backfill sooner.
 
-## Levers left, with what they can buy
+## The task: lever (b), one exchange for two fields (the user's decision, 2026-09-29)
 
-- (b) The two ghost exchanges that follow each other in `hst_equations`
-  (`fill_ghosts(1)` then `fill_ghosts(3)` after the recovery of u and w)
-  as one exchange of two fields: 12 -> 9 exchanges a step, i.e. 3 x
-  (0.2-0.4 ms) = about 1 ms of 23.6 at 256^3 (4%), 2 of 122 at 512^3.
-  Needs a `fill_ghosts(c1, c2)` in `hst_derivatives` (pack two
-  components into one buffer) and the two calls in `hst_equations`:
-  physics files on `main`, so **the user decides first**.
-- (d) Smaller records for the system kinds whose matrix does not change
-  between calls (`KIND_DY` every substep, the implicit kinds while
-  `deltat` is fixed): bytes only; with (c) the exposed record time at
-  512^3 is 4.6 ms of 122, so at most 3%.
-- The ghost rows' fixed cost (12 x 0.2-0.4 ms) is out of reach without
-  computing the interior rows while the exchange is in flight, which is
-  structure in the physics files that `main` does not want.
-- Not levers of the exchange but of the step: one node at 512^3 is
-  0.216 s on 4 A100 (FINDINGS "The line solver's latency" and "The
-  kernels around the transposes" have the per-kernel picture); the
-  H100 partitions (`accelerated-h100`, `cc90`) have not been tried.
+The recovery of u and w at the end of `linsolve` (`hst_equations`, the
+last lines) ends with `call fill_ghosts(1)` and `call fill_ghosts(3)`:
+two ghost-row exchanges back to back, each paying the inter-node fixed
+cost (0.2-0.4 ms) on top of its bytes.  As one exchange of two fields
+the step has 9 instead of 12 exchanges: about 1 ms of 23.6 at 256^3
+(4%) and 2 ms of 122 at 512^3 (under 2%), nothing on one node.  The
+other exchanges of a substep stay separate: `fill_ghosts(2)` feeds the
+`KIND_DY` solve that follows it, `fill_ghosts_field(V(:, :, :, 1), sx1,
+sz1)` in `shear_shift` uses other displacements, and `fill_ghosts(3)`
+after `stokes_apply` runs only with a Stokes layer.  This is the first
+change to a physics file made for the parallel layer, so it goes on
+`main` in the smallest form and reaches the branch by `git merge main`
+(the branch then changes `hst_mpi` only), and DESIGN.md's list of
+departures gets a line.
 
-So the y decomposition is at the point where the remaining exchange
-levers are worth a few percent each; whether to spend a session on (b)
-+ (d), on the H100 nodes, on production runs (long sheared runs,
-statistics, the CPL post-processing chain on the files), or on merging
-the branch into `main` (the user's call; today `main` = x-z pencils
-only, and the branch differs in `hst_mpi`, `hst_linsolve` and one job
-script) is the question for the user at the start of the next session.
+The change, about ten lines longer in all:
+
+- `hst_derivatives`: `fill_ghosts(c, c2)` with an optional second
+  component, passing `V(:, :, :, c2)` on to `exchange_ghost_rows` as an
+  optional fourth argument; `fill_ghosts_field` (one field, used by
+  `shear_shift` and `test_linsolve`) unchanged.
+- `hst_equations`: the two calls become `call fill_ghosts(1, 3)`.
+- `hst_mpi` on `main`: `exchange_ghost_rows(field, shift_x, shift_z,
+  field2)`, the present in-place wrap as an internal subroutine called
+  for `field` and, if present, `field2` (an absent optional must not
+  appear inside a target region: test `present` on the host and launch
+  twice).
+- `hst_mpi` on the branch: the same signature; the buffers
+  `ghost_send`/`ghost_recv` get a field dimension of 2, the pack and the
+  unpack become internal subroutines `pack(field, f)` / `unpack(field,
+  f)` launched once per present field, and the NCCL/MPI transfer sends
+  `nf` times the bytes as one message per direction (the buffer layout
+  `(2, -nz:nz, nx0:nxN, f, direction)` keeps a direction's blocks
+  contiguous when `f` is the inner of the two).  The `npy = 1` wrap
+  handles both fields as on `main`.
+- Results must be bit-identical to today's (the same operations in the
+  same order): besides the safety net, compare `Dati.cart.out` of the
+  `small` deck on istmcetus (`build-nccl`, 2 ranks, `npy = 2`) before
+  and after with `cmp`, and the two-node regression decks at `npy = 0`
+  in the job below.
+- The A/B: worktree + branch `lever-b` as before, rsync to `~/hst-exp2`
+  (a stale copy today; `~/hst-exp3` too), build, then from `~/hst-exp`
+
+  ```bash
+  ssh horeka 'cd ~/hst-exp && sbatch --parsable --partition=accelerated --time=00:12:00 --export=ALL,HST_ROOT=$HOME/hst-exp,ROOTS="$HOME/hst-exp $HOME/hst-exp2",NPY_REG=0,CONFIGS="4:bench_256:20:nccl:none:0 8:bench_256:20:nccl:none:0 4:bench_512:10:nccl:none:0 8:bench_512:10:nccl:none:0 8:small:50:nccl:none:0" jobs/horeka_2node.slurm'
+  ```
+
+  Keep it if the 8-GPU rows move by more than the noise (the 512^3 row
+  spread 0.3% across five runs of one night, the 256^3 row about 1%;
+  the ghost-row line should drop by a quarter) and the 4-GPU rows stay a
+  wash; the `small` row shows the fixed cost saved directly (3 x 0.2
+  ms of its 2.5 ms of ghost rows).  If it is a wash, drop it and say so
+  in FINDINGS: then the fixed cost is not per exchange but per byte
+  stream, and the exchange chapter is closed.
+- Docs: FINDINGS subsection with the table, README (the 2 x 4 A100
+  column and the sentence on what remains), DESIGN.md departures, this
+  file.
+
+After (b) the remaining levers are (d), smaller records for the system
+kinds whose matrix does not change between calls (bytes only, at most
+3% at 512^3), and nothing cheap: the ghost rows' fixed cost needs
+interior rows computed while the exchange is in flight.  Beyond the
+exchange: a four-node run at 512^3 (expected well below 2x of two
+nodes: the 13 ms of exchange stay while the compute halves), the H100
+partitions (`accelerated-h100`, `cc90`), production runs, or merging the
+branch into `main`.
 
 ## Safety net (both branches; the branch adds a third argument, npy)
 
@@ -110,13 +150,14 @@ for homogeneous shear turbulence; read README.md, then NEXT_SESSION.md,
 then FINDINGS.md from "The layout without user input" to the end.  The
 two branches stay separate and run the same decks and field files;
 branches differ only in hst_mpi and hst_linsolve; merge main into the
-branch, never the reverse; docs on main.  The y decomposition's exchange
-levers are measured; NEXT_SESSION.md lists what is left and what each
-can buy.  Task: [the user fills in: (b) + (d), the H100 nodes,
-production runs, or merging the branch].  Safety net green after every
-code change (CPU, GPU, NCCL on istmcetus, the cross-branch round trip);
-HoreKA A/Bs in one two-node job with ROOTS, time limit = expected length
-plus margin.  Do not modify ~/Codes/hst/channel or ~/Codes/hst/hst-main.
-Commit each step; push both branches at the end.  First thing: `! ssh
-horeka true` in the prompt.
+branch, never the reverse; docs on main.  Task: lever (b) of
+NEXT_SESSION.md, the two ghost exchanges at the end of linsolve as one
+exchange of two fields (fill_ghosts(1, 3)), in the smallest form on
+main and hst_mpi on the branch; results bit-identical; measured as an
+A/B in one two-node job (time limit 12 min) and kept only with the
+number; then docs (FINDINGS, README, DESIGN departures, NEXT_SESSION).
+Safety net green after every code change (CPU, GPU, NCCL on istmcetus,
+the cross-branch round trip).  Do not modify ~/Codes/hst/channel or
+~/Codes/hst/hst-main.  Commit each step; push both branches at the end.
+First thing: `! ssh horeka true` in the prompt.
 ```
