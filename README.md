@@ -166,6 +166,7 @@ line-solver and overlap session, and after the transpose-kernel session):
 | 64 x 128 x 64 | 0.0117 (0.0134, 0.0145) | | | 0.109 (0.127, 0.127) | 0.70 (0.89, 0.89) |
 | 256 x 256 x 256 | 0.082 (0.087, 0.099) | 0.030 (0.034, 0.039) | 0.0226 | 0.85 (0.98, 0.98) | |
 | 512 x 512 x 512 | 0.646 (0.687, 0.819) | 0.216 (0.227, 0.262) | 0.121 | | |
+| 1024 x 1024 x 1024 | | out of memory | 1.005 (39.3 GB per GPU) | | |
 
 Four A100 use the NCCL transport (`make GPU=1 NCCL=1`); with MPI's
 alltoall the 4-GPU step is 2.5-3x longer (FINDINGS.md).  The RTX 3060
@@ -191,7 +192,11 @@ node two nodes are 1.33x one node at 256^3 and 1.79x at 512^3 (the
 column above); what remains is mostly the fixed cost of the 18 y
 exchanges of a step, 0.2-0.26 ms each across the nodes before any bytes
 (FINDINGS.md, "The fixed cost of the y exchange" and the lever sections
-after it).  On one node the x-z pencils stay (2 x 2 is 10-20% slower
+after it).  1024^3 needs two A100 nodes (`examples/bench_1024.in`: 39.3
+GB of the 40 GB per GPU on 8 ranks, mostly the fields and the physical-
+space buffers; four ranks run out of memory) and takes 8.3x the 512^3
+step there, with the y exchange down to 2.5% of the step (FINDINGS.md,
+"Scaling").  On one node the x-z pencils stay (2 x 2 is 10-20% slower
 than 4 x 1).
 
 ## Status

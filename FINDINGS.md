@@ -1344,3 +1344,56 @@ whose matrix does not change between calls, is bytes only (at most 3%
 at 512^3), and the ghost rows' fixed cost can only be hidden by
 computing interior rows while the exchange is in flight, which is a
 change in the physics files' loop structure, not in the parallel layer.
+
+## Scaling: 512^3 and 1024^3 on two and four A100 nodes (2026-09-29, session 11, jobs 5170167 and 5170168)
+
+Measurement only, no code change: `jobs/horeka_2node.slurm` gained a
+`BUILD` variable (the H100 build directory) and a `mem` marker that
+samples `nvidia-smi` on the first node during a run and prints the peak
+memory per GPU, and `examples/bench_1024.in` is `bench_512.in` with the
+modes doubled.  Two-node job 5170167 (`dev_accelerated`, hkn0401-0402,
+6 min for six runs and the regression decks; its twin on `accelerated`
+cancelled), `npy = 0` for the 8-GPU rows:
+
+| A100 40 GB, NCCL, s/step | 4 GPU (1 node) | 8 GPU (2 nodes) | ratio |
+| --- | --- | --- | --- |
+| bench_256 | 0.03033 | 0.02257 | 1.34x |
+| bench_512 | 0.21613 | 0.12089 | 1.79x |
+| bench_1024 | out of memory | 1.00537 | |
+| bench_1024, peak memory per GPU | (36.7 GB when the allocation failed) | 39.3 GB | |
+| bench_1024, phase "ghosts, dv/dy, u and w" | | 50.3 ms (5.0%) | |
+| bench_1024, ghost rows / exposed records (transfers only) | | 21.0 / 3.8 ms (2.5%) | |
+| bench_512, the same | | 8.6 / 4.5 ms (10.8%) | |
+
+**1024^3 fits on two A100 nodes and nowhere smaller.**  The 8-rank run
+peaks at 39.3 GB of the 40 GB (cuFFT work area 2322 MB, two line-solver
+workspaces of 1562 MB, the rest the seven spectral components with ghost
+rows, 1.08 GB each, and the physical-space and transpose buffers); the
+4-rank run dies in `cuMemAlloc` at 36.7 GB while still allocating.  So
+the one-node 1024^3 reference does not exist on the A100, and the deck's
+first useful configuration is 8 GPUs; a 1024^3 production run has 1.7
+GB of headroom per GPU, enough for the statistics and the I/O buffer
+(`hst_io` allocates a host copy only).
+
+**The step scales with the points, the exchange does not.**  1024^3 on 8
+GPUs is 8.3x the 512^3 step on the same 8 GPUs for 8x the points (the
+FFT phases 9.4x and 9.2x, the solves 4.9x, the ghost phase 4.4x): the
+y exchange, 13.1 ms at 512^3 (10.8% of the step), is 24.9 ms at 1024^3
+(2.5%): the ghost rows carry 4x the bytes (21.0 vs 8.6 ms, i.e. the
+fixed cost is no longer what they cost), the exposed records the same
+3.8 vs 4.5 ms (the gather hides behind a sweep that is now 4x longer).
+So at the production size the two-node code is within 3% of what a
+node-local exchange would give, and the levers left in the handoff of
+session 10 (interior/boundary row splitting, lever (d)) are worth at
+most that.  The 512^3 two-node ratio is unchanged since job 5170040
+(1.79x; the phases within 0.5%).
+
+**H100 (`accelerated-h100`, `GPU_ARCH=cc90`, `~/hst-y/build-h100`
+built):** all 20 nodes of the partition (hkn0902-0922) are in the
+reservation `hk2teal` until 2026-10-31 and the job (5170169) pends with
+`ReqNodeNotAvail`; a submission with `--reservation=hk2teal` was
+accepted by sbatch and pended the same way (cancelled).  Job 5170169 is
+left in the queue; if the nodes come back it runs the two-node configs
+with the H100 build into `~/hst-runs/scal-h2`.  Whether the 94 GB H100
+holds 1024^3 on one node (estimated 75 GB per GPU) is part of what it
+would measure.
