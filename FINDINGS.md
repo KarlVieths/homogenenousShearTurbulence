@@ -1282,3 +1282,65 @@ before) and 1.29x at 256^3.  Of the 121.8 ms step at 512^3 the y
 exchange still shows 8.6 ms of ghost rows and 4.6 ms of exposed records
 (11%); at 256^3 4.7 + 1.6 of 23.6 ms (27%), mostly the fixed cost
 measured above.  Kept: merged into `multinode-y`.
+
+## Lever (b): one ghost exchange for u and w (2026-09-29, session 10, job 5170040): kept
+
+The recovery of u and w at the end of `linsolve` ended with
+`fill_ghosts(1)` and `fill_ghosts(3)`, two ghost-row exchanges back to
+back, each paying the inter-node fixed cost.  Now `fill_ghosts(c, c2)`
+takes an optional second component and `exchange_ghost_rows(field,
+shift_x, shift_z, field2)` an optional second field: on `main` the
+shear-periodic wrap runs once per field (an internal subroutine, since
+an absent optional must not appear in a target region: `present` is
+tested on the host and the kernel launched per field); on the branch the
+buffers `ghost_send`/`ghost_recv` became `(2 rows, z, x, field,
+direction)`, pack and unpack are internal subroutines launched once per
+present field, and one NCCL (or MPI) message per direction carries both
+fields, the field index being inside the direction one.  `linsolve` ends
+with `call fill_ghosts(1, 3)`: 9 instead of 12 ghost exchanges per step
+(18 instead of 21 y exchanges).  The first change to a physics file made
+for the parallel layer (DESIGN.md, departures), ten lines in
+`hst_derivatives` and `hst_equations`; the same operations in the same
+order, so the results are bit-identical: `cmp` of the `small` deck's
+`Dati.cart.out` after 50 steps before and after, on `main` (RTX 3060, 1
+and 2 ranks) and on the branch at 1 x 2 through MPI on the device
+(istmio2) and through NCCL (istmcetus), plus the safety net on both
+branches and the cross-branch round trips.  Same two A100 nodes, back
+to back, `npy = 0` (job 5170040, `dev_accelerated`):
+
+| A100, `npy = 0` | branch head | lever (b) |
+| --- | --- | --- |
+| bench_256, 4 GPU, s/step | 0.03069 | 0.03015 |
+| bench_256, 8 GPU (2 nodes), s/step | 0.02307 | **0.02262** |
+| its phase "ghosts, dv/dy, u and w" | 4.50 ms | 4.07 ms |
+| its ghost rows / exposed records (transfers only) | 4.64 / 3.32 ms | 4.93 / 3.42 ms |
+| bench_512, 4 GPU, s/step | 0.21622 | 0.21676 |
+| bench_512, 8 GPU (2 nodes), s/step | 0.12178 | **0.12118** |
+| its phase "ghosts, dv/dy, u and w" | 11.71 ms | 11.25 ms |
+| its ghost rows / exposed records (transfers only) | 8.96 / 4.62 ms | 8.65 / 4.11 ms |
+| `small`, 8 GPU (2 nodes), s/step | 0.00784 | **0.00703** |
+| its ghost rows / exposed records (transfers only) | 3.08 / 1.88 ms | 2.24 / 1.68 ms |
+
+The `small` deck shows the fixed cost saved directly: its ghost rows
+drop by 27%, the predicted quarter (3 of 12 exchanges), 0.8 ms of its
+7.8 ms step.  At 256^3 the 8-GPU step gains 2.0% (the phase that holds
+the exchange 0.43 ms, three exchanges' fixed cost; the row's noise
+between jobs is about 1%), at 512^3 0.5% (0.46 ms in the phase; noise
+0.3%), the 4-GPU rows are a wash (-1.8% and +0.3%, within the 2% the
+one-node 256^3 row moves between jobs).  The "transfers only" ghost-row
+line at 256^3 went up while the phase went down: that line is the sum
+of synchronised transfer times, i.e. transfers plus the skew between the
+slabs, and with fewer synchronisation points the skew lands elsewhere;
+the phase and the step are the numbers to believe.  Kept.  Two nodes are
+now 1.33x one node at 256^3 and 1.79x at 512^3 (this job, where the
+one-node rows are 0.03015 and 0.21676).
+
+What is left in the y exchange after (a), (b), (c): at 512^3 8.65 ms of
+ghost rows and 4.11 ms of exposed records of the 121.2 ms step (10.5%);
+at 256^3 4.93 + 3.42 of 22.6 ms (the exposed records were 1.6 ms in job
+5168954 and 3.3-3.4 ms in this one: that part moves between jobs).  The
+cheap levers are used up: (d), smaller records for the system kinds
+whose matrix does not change between calls, is bytes only (at most 3%
+at 512^3), and the ghost rows' fixed cost can only be hidden by
+computing interior rows while the exchange is in flight, which is a
+change in the physics files' loop structure, not in the parallel layer.
