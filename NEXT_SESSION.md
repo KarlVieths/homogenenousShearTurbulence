@@ -11,10 +11,9 @@ Copy the block at the end as the opening message of the next session.
   choosing one slab per node when that fits the grid; the safety net was
   green on CPU, GPU and NCCL after the merge and `tests/crossbranch.sh
   <build> <build> 4 1 2` (and `4 2 1`) is now the restart test between
-  `npy` values.  The branch name still exists and points at the same
-  commit as `main`; the worktree `~/Codes/hst/homogenenousShearTurbulence`
-  is on it and `~/Codes/hst/homogenenousShearTurbulence-main` on `main`
-  (one of the two can go: `git worktree remove`).  On HoreKA `~/hst` is
+  `npy` values.  The branch `multinode-y` is deleted (locally and on
+  origin) and the `-main` worktree removed: one checkout,
+  `~/Codes/hst/homogenenousShearTurbulence`, on `main`.  On HoreKA `~/hst` is
   the merged `main` (rebuilt); `~/hst-y`, `~/hst-exp`, `~/hst-exp2` are
   the branch before the docs (same code) and `~/hst-base`, `~/hst-exp4`,
   `~/hst-exp5` older variants: all five can go.
@@ -61,8 +60,7 @@ again (the `dev_accelerated` one started after 28 min).
    CFL of the deck.  Recommended: it is what the code is for, and the
    first run will find what the benchmarks do not (restart cadence,
    field I/O time at 1024^3, the statistics).
-2. **Cleanup after the merge**: remove the branch and one worktree, the
-   stale HoreKA copies, fold `tests/crossbranch.sh` into the safety net
+2. **Cleanup after the merge**: remove the stale HoreKA copies, fold `tests/crossbranch.sh` into the safety net
    as the `npy` restart test (README "Tests"), retire the "branch"
    wording that is left in FINDINGS.md's older sections (they are
    history, so probably leave them).
@@ -78,7 +76,7 @@ tests/run_tests.sh build-gpu 2 && tests/run_tests.sh build-gpu 2 2
 tests/regression.sh build-cpu 2 && tests/regression.sh build-cpu 4 2        # 50 steps of three decks at 1e-10
 tests/regression.sh build-gpu 1 && tests/regression.sh build-gpu 2 && tests/regression.sh build-gpu 2 2
 tests/crossbranch.sh build-cpu build-cpu 4 1 2 && tests/crossbranch.sh build-cpu build-cpu 4 2 1   # restart between npy values
-ssh istmcetus 'cd ~/Codes/hst/homogenenousShearTurbulence-main && source env/istm.sh && make GPU=1 NCCL=1 BUILD=build-nccl -j8 && make GPU=1 NCCL=1 BUILD=build-nccl test -j8 && tests/run_tests.sh build-nccl 2 2 && tests/regression.sh build-nccl 2 2 && tests/run_tests.sh build-nccl 2 && tests/regression.sh build-nccl 2 && tests/crossbranch.sh build-nccl build-nccl 2 1 2'
+ssh istmcetus 'cd ~/Codes/hst/homogenenousShearTurbulence && source env/istm.sh && make GPU=1 NCCL=1 BUILD=build-nccl -j8 && make GPU=1 NCCL=1 BUILD=build-nccl test -j8 && tests/run_tests.sh build-nccl 2 2 && tests/regression.sh build-nccl 2 2 && tests/run_tests.sh build-nccl 2 && tests/regression.sh build-nccl 2 && tests/crossbranch.sh build-nccl build-nccl 2 1 2'
 ```
 
 A bit-identity check of a change that must not alter the numbers: run
@@ -103,10 +101,8 @@ the user types `! ssh horeka true`.
 ## Opening message for the next session
 
 ```
-Repository ~/Codes/hst/homogenenousShearTurbulence-main (branch main,
-tags xz-parallel / xyz-parallel; ~/Codes/hst/homogenenousShearTurbulence
-is a worktree on multinode-y, now the same commit; on HoreKA ~/hst =
-main), a GPU/CPU DNS for homogeneous shear turbulence with x-z pencils
+Repository ~/Codes/hst/homogenenousShearTurbulence (one branch, main,
+tags xz-parallel / xyz-parallel; on HoreKA ~/hst = main), a GPU/CPU DNS for homogeneous shear turbulence with x-z pencils
 times npy y slabs; read README.md, then NEXT_SESSION.md, then
 FINDINGS.md from "Scaling" to the end.  Task: item 1 of NEXT_SESSION.md
 unless I say otherwise.  Safety net green after any code change (CPU,
