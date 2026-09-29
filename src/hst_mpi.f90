@@ -14,7 +14,7 @@
 ! see hst_linsolve.  One slab per node keeps the alltoalls on NVLink
 ! (mpirun --map-by ppr:npxz:node).  The physics files know nothing of this
 ! (DESIGN.md 7 (i)); with npy = 1 this file is the x-z pencil code of the
-! main branch, the ghost rows being the shear-periodic wrap of the slab.
+! tag xz-parallel, the ghost rows being the shear-periodic wrap of the slab.
 !
 ! A transpose is done in two halves so that the alltoall of one field can
 ! overlap the transforms of the next (the channel's CHANNEL_OVERLAPPING):

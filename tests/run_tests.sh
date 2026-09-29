@@ -1,8 +1,8 @@
 #!/bin/bash
 # Run the test programs of a build.   usage:  tests/run_tests.sh [build-cpu|build-gpu] [nranks] [npy]
 # Each test prints PASSED or FAILED; the script exits non-zero if any failed.
-# With npy > 1 the multi-rank runs put that many y slabs into the deck (the
-# branch multinode-y; nranks must be a multiple of npy).
+# With npy > 1 the multi-rank runs put that many y slabs into the deck
+# (nranks must be a multiple of npy).
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 build=${1:-build-cpu}

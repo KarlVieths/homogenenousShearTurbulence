@@ -3,8 +3,7 @@
 #   tests/regression.sh [build-cpu|build-gpu] [nranks] [npy] [--update]
 # Runs each deck of DECKS for its 50 steps and compares the final field with
 # the stored reference at 1e-10 relative (CPU and GPU builds differ by
-# ~1e-14).  npy > 1 puts that many y slabs into the deck (the branch
-# multinode-y).  --update rewrites the references from this build: do that
+# ~1e-14).  npy > 1 puts that many y slabs into the deck.  --update rewrites the references from this build: do that
 # only on purpose, after a change that is meant to alter the numbers.
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)

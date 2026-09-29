@@ -2,7 +2,7 @@
 # HoreKA GPU test job: runs the test suite on 4 GPUs, then the small deck on
 # 4 GPUs, and compares its final field with a CPU run made on the login node
 # (tests/decks/small.in, expected agreement ~1e-13).  NPY > 1 runs both with
-# that many y slabs (the branch multinode-y: NPY=2 is 2 x-z pencils x 2 slabs).
+# that many y slabs (NPY=2 is 2 x-z pencils x 2 slabs).
 #   cd ~/hst && sbatch jobs/horeka_tests.slurm           (HST_ROOT, NPY overridable)
 #SBATCH --job-name=hst-tests
 #SBATCH --account=hk-project-exasim

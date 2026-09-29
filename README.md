@@ -32,14 +32,16 @@ The CPL code calls that direction `z` (and its `w` is our `v`).
 Stored modes are `0..nx` in `x` and `-nz..nz` in `z`; `ny` uniform points
 span `ly` in `y`.  The number of MPI ranks must divide both `nx+1` and
 `nzd` (`3*nz` rounded up to a power of two times at most one factor 3).
-Each rank owns all of `y` (one GPU per rank, x-z pencils).  The y
-decomposition for several nodes is on the branch `multinode-y`, which
-differs from `main` in the parallel layer only (`hst_mpi`, `hst_linsolve`):
-the physics files are written for any number of y slabs `npy` (DESIGN.md
-7 (i)).  `npy` in `&mesh` defaults to 0, "the code chooses": one slab on
-`main`, one slab per node on the branch when that fits the grid (else one);
-the same deck and the same field files run on both branches, on one GPU,
-on the GPUs of a node and on several nodes.
+On one node each rank owns all of `y` (one GPU per rank, x-z pencils);
+on several nodes the ranks form `npy` y slabs, one per node, so that the
+alltoalls stay inside the node (DESIGN.md 7 (i); the parallel layer is
+`hst_mpi` and `hst_linsolve`, the physics files are written for any
+`npy`).  `npy` in `&mesh` defaults to 0, "the code chooses": one slab on
+one node, one slab per node when that fits the grid (else one); the same
+deck and the same field files run on one GPU, on the GPUs of a node and
+on several nodes.  The y decomposition was developed on the branch
+`multinode-y` and merged in session 11: the tag `xz-parallel` marks
+`main` before the merge (x-z pencils only), `xyz-parallel` after.
 
 ## Build
 
@@ -83,8 +85,8 @@ are inside the transform and product phases, since the alltoall of one
 field overlaps the transforms of the next and only its exposed part costs
 time).  `line_chunk`
 in `&mesh` bounds the workspace of the line solver (x columns per batch;
-0 = the default: all columns on the GPU, 16 on the CPU; on the branch with
-several slabs two batches when each fills the GPU, see `src/hst_linsolve.f90`).
+0 = the default: all columns on the GPU, 16 on the CPU; with several
+slabs two batches when each fills the GPU, see `src/hst_linsolve.f90`).
 `transport` in `&mesh` chooses how the alltoall moves the device buffers:
 `'mpi'` (CUDA-aware MPI), `'nccl'` (a build with `NCCL=1`, one GPU per
 rank) or `'auto'` (NCCL when both hold, the default; the choice is printed
@@ -146,8 +148,9 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
 `tests/crossbranch.sh <build A> <build B> [nranks] [npy A] [npy B]` runs
 25 steps of the small deck with one build and the other 25 with the other,
 restarted from its `Dati.cart.out`, against the 50-step reference: the
-round trip between `main` and the branch `multinode-y` (either way, the
-branch at `npy = 2`) agrees to 1e-13.
+round trip between `npy = 1` and `npy = 2` (either way, with one build
+or two; it began as the round trip between `main` and the branch
+`multinode-y`) agrees to 1e-13.
 
 The full solver agrees between CPU and GPU to 1e-13 after 50 steps, and
 runs with different rank counts are bit-identical on the GPU.  Against the
@@ -161,7 +164,7 @@ Seconds per full time step (three substeps), `examples/bench_*.in`, after
 the solver-latency session of FINDINGS.md (in brackets: after the
 line-solver and overlap session, and after the transpose-kernel session):
 
-| grid (dealiased) | 1 x A100 | 4 x A100 | 2 x 4 A100, branch `multinode-y` | 1 x RTX 3060 | istmio2 CPU, 4 ranks |
+| grid (dealiased) | 1 x A100 | 4 x A100 | 2 x 4 A100 (`npy = 2`) | 1 x RTX 3060 | istmio2 CPU, 4 ranks |
 | --- | --- | --- | --- | --- | --- |
 | 64 x 128 x 64 | 0.0117 (0.0134, 0.0145) | | | 0.109 (0.127, 0.127) | 0.70 (0.89, 0.89) |
 | 256 x 256 x 256 | 0.082 (0.087, 0.099) | 0.030 (0.034, 0.039) | 0.0226 | 0.85 (0.98, 0.98) | |
@@ -180,8 +183,8 @@ behind the transforms); on two nodes (8 A100, `jobs/horeka_2node.slurm`) the
 step is 2.1-2.3x *slower* than on four GPUs of one node, because half
 of every alltoall then crosses the node's single InfiniBand link at its
 wire rate (GPUDirect RDMA, NUMA binding and a two-level alltoall were
-measured and do not help), so a second node needs the y decomposition:
-the branch `multinode-y` (`npy` slabs in y, one per node, the alltoalls
+measured and do not help), so a second node needs the y decomposition
+(`npy` slabs in y, one per node, the alltoalls
 inside the node, the line solves coupled by a small reduced system, the
 ghost rows and the reduced systems exchanged through a second NCCL
 communicator over the y column; DESIGN.md 7 (i), FINDINGS.md "The y
@@ -206,7 +209,7 @@ than 4 x 1).
 | numerics, GPU, pressure, CPL files, S2, Stokes layer | done and validated (FINDINGS.md) |
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
 | NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
-| y decomposition | on the branch `multinode-y` (DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.33x (256^3) and 1.79x (512^3) one node (FINDINGS.md); `npy = 0` (default) lets the code choose: one slab per node on the branch, one slab on `main` |
+| y decomposition | merged into `main` in session 11 (tags `xz-parallel` before, `xyz-parallel` after; DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.33x (256^3) and 1.79x (512^3) one node (FINDINGS.md); `npy = 0` (default) lets the code choose: one slab per node |
 | safety net | `tests/run_tests.sh` (12 runs) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout

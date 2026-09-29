@@ -1,12 +1,14 @@
 #!/bin/bash
-# Cross-branch round trip: 25 steps of the small deck with build A, the other
-# 25 with build B restarted from A's Dati.cart.out, the final field compared
-# with tests/reference/small.fld at 1e-10 (the restart file is exact, so the
-# tolerance is that of the regression).  The two builds may be of different
-# branches (main in one checkout, multinode-y in a worktree): the same deck
-# and the same field files must work on both.
+# Restart round trip: 25 steps of the small deck with build A at npy A, the
+# other 25 with build B at npy B, restarted from A's Dati.cart.out, the final
+# field compared with tests/reference/small.fld at 1e-10 (the restart file is
+# exact, so the tolerance is that of the regression).  The two builds may be
+# the same one (then it is the restart test between npy values, e.g. 1 -> 2
+# and 2 -> 1) or of different checkouts (it began as the round trip between
+# main and the branch multinode-y, merged in session 11): the same deck and
+# the same field files must work on both.
 #   tests/crossbranch.sh <build A> <build B> [nranks] [npy A] [npy B]
-# The builds are directories; npy > 1 needs a build of the branch.
+# The builds are directories.
 set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 A=$(cd "$1" && pwd); B=$(cd "$2" && pwd); np=${3:-2}; npyA=${4:-1}; npyB=${5:-1}

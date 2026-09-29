@@ -477,8 +477,13 @@ that reversing it is an addition, not a rewrite.
   `npy = 1`.  All fluid dynamics goes to `main` and reaches the branch by
   `git merge main`, never the other way, and the two may differ only in
   `hst_mpi.f90`, `hst_linsolve.f90` and `hst_io.f90` (`git diff main
-  multinode-y --stat` after every merge).  For that, every physics file
-  follows this **contract**, which makes it correct for any `npy`:
+  multinode-y --stat` after every merge).  *Merged (2026-09-29, session
+  11, after the scaling measurements):* the branch differed in
+  `hst_mpi.f90` and `hst_linsolve.f90` only and `main` now carries the y
+  decomposition (tag `xyz-parallel`; `xz-parallel` is `main` before the
+  merge).  The contract stays: it is what keeps the physics files
+  independent of `npy`.  Every physics file follows this **contract**,
+  which makes it correct for any `npy`:
   1. A loop over y runs `ny0, nyN`, never `0, ny - 1`; a stencil along y
      reads the rows `iy + j`, `j = -2..2`, i.e. at most the two ghost rows
      on each side, and nothing further away.
@@ -493,7 +498,7 @@ that reversing it is an addition, not a rewrite.
   4. A row with special treatment (the Stokes rows `0` and `ny - 1`,
      `hst_stokes`) is touched only if `ny0 <= iy <= nyN`.
   5. Anything else along y goes through `line_solve` (one entry point,
-     one signature, on both branches).
+     one signature).
   6. The global y arrays (`y`, `dyl`, `fy`, `inlayer`, `der`) stay global,
      indexed by the global row: they are small and every rank has them.
   7. The initial field is seeded by global indices and each rank fills
@@ -501,8 +506,9 @@ that reversing it is an addition, not a rewrite.
      field; the file I/O (`hst_io`) writes the rows a rank owns through a
      row-range view and the file's ghost rows from the ranks that own
      their sources.
-  With that, `npy = 1` on the branch gives the results of `main` and
-  `npy > 1` must reproduce `tests/reference/*.fld` at 1e-10.  The
+  With that, `npy = 1` gives the results of the x-z pencil code (tag
+  `xz-parallel`) and `npy > 1` must reproduce `tests/reference/*.fld` at
+  1e-10.  The
   refactor of `main` to this contract (phase 0 of the handout) was
   bit-identical on the three regression decks, CPU and GPU.
 - **(ii) NCCL: MPI first, optional backend later.**  NCCL is only a transport

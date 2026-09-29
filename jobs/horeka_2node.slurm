@@ -2,8 +2,8 @@
 # HoreKA two-node measurement: the same benchmarks on 4 A100 of one node and
 # on 8 A100 of two nodes (InfiniBand between them), with the per-phase timer.
 # Configurations: transport nccl / mpi, ranks bound to the NUMA domain of
-# their GPU (jobs/bind_numa.sh) or not, npy y slabs (1 on main; the branch
-# multinode-y takes 2 for one slab per node).  A run marked info prints
+# their GPU (jobs/bind_numa.sh) or not, npy y slabs (0 = one per node, 1 =
+# x-z pencils only, 2 = one slab per node of two).  A run marked info prints
 # NCCL's network setup (NCCL_DEBUG=INFO: adapter and GDRDMA per
 # connection), and the regression decks run on 8 ranks with NPY_REG slabs
 # against tests/reference.
@@ -20,7 +20,7 @@
 # GPU, for the largest grid that fits); NCCL_* variables in the environment
 # reach the runs (e.g. NCCL_NET_GDR_LEVEL=SYS lets NCCL use GPUDirect RDMA for
 # GPUs that are not next to the adapter).  Four nodes: --nodes=4 on the sbatch
-# line (npy = 0 lets the branch choose one y slab per node); two jobs of the
+# line (npy = 0 chooses one y slab per node); two jobs of the
 # same configs must not share RUNS.
 #SBATCH --job-name=hst-2node
 #SBATCH --account=hk-project-exasim
