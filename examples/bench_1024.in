@@ -1,0 +1,7 @@
+! Benchmark deck: 1024x1024x1024 dealiased grid (nx = nz = 511 stored modes, ny = 1024),
+! 20 fixed steps, no output; about 3 GB per rank per 512^3/8 ranks, so 1024^3 needs
+! 8 or more A100 (FINDINGS.md, the scaling session).  Used for the timings in README.md.
+&mesh  nx = 511, ny = 1024, nz = 511, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 2000.0, S = 1.0, linear = .false. /
+&time_control  deltat = 0.001, cflmax = 0.0, t_max = 1e9, nstep = 20, dt_stat = 1e9, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 8.0 /
