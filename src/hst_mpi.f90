@@ -72,8 +72,9 @@ module hst_mpi
   integer(C_INT), parameter :: TILE = 32, ROWS_PER_THREAD = 4   ! transpose_tiled: tile edge, rows per thread
   type(MPI_Comm), save :: comm_xz, comm_y                       ! the ranks of a slab; the ranks of a y column
   real(C_DOUBLE), save :: t_ghost = 0.0d0, t_gather = 0.0d0     ! time in the y exchanges (timing = .true.)
-  ! the two rows sent to and received from each neighbouring slab (exchange_ghost_rows)
-  complex(C_DOUBLE_COMPLEX), allocatable, target, save :: ghost_send(:, :, :, :), ghost_recv(:, :, :, :)
+  ! the two rows of up to two fields sent to and received from each neighbouring slab
+  ! (exchange_ghost_rows): (2 rows, z, x, field, direction), one direction's fields contiguous
+  complex(C_DOUBLE_COMPLEX), allocatable, target, save :: ghost_send(:, :, :, :, :), ghost_recv(:, :, :, :, :)
 
 #ifdef HAVE_NCCL
   ! NCCL through its C prototypes (nccl.h).  The Fortran module of NVHPC
@@ -210,7 +211,7 @@ contains
     compute_stream = transfer(target_stream(), compute_stream)
 #endif
     if (npy > 1) then
-      allocate (ghost_send(2, -nz:nz, nx0:nxN, 2), ghost_recv(2, -nz:nz, nx0:nxN, 2))
+      allocate (ghost_send(2, -nz:nz, nx0:nxN, 2, 2), ghost_recv(2, -nz:nz, nx0:nxN, 2, 2))
       ghost_send = 0; ghost_recv = 0
       !$omp target enter data map(to: ghost_send, ghost_recv)
     end if
@@ -266,63 +267,50 @@ contains
   ! NCCL on the compute stream (two send/receive pairs between the pack
   ! and the unpack, the host does not wait) or with MPI on the device
   ! buffers, and unpacked with the phase on the slabs at the box edge.
-  subroutine exchange_ghost_rows(field, shift_x, shift_z)
+  ! A second field, if given, travels in the same messages: the buffers
+  ! hold nf fields per direction, contiguous (u and w at the end of
+  ! linsolve, so that an inter-node exchange's fixed cost is paid once).
+  subroutine exchange_ghost_rows(field, shift_x, shift_z, field2)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
     real(C_DOUBLE), intent(in) :: shift_x, shift_z
-    integer(C_INT) :: ix, iz, k, up, down
-    complex(C_DOUBLE_COMPLEX) :: ph, f_below, f_above
+    complex(C_DOUBLE_COMPLEX), intent(inout), optional :: field2(ny0 - 2:, -nz:, nx0:)
+    integer(C_INT) :: nf, count, up, down
     real(C_DOUBLE) :: t0
 #ifdef HAVE_NCCL
     integer(C_SIZE_T) :: nbytes
     integer :: r
 #endif
 
+    nf = 1; if (present(field2)) nf = 2     ! (an absent optional must stay out of the target regions)
     if (npy == 1) then
-      !$omp target teams distribute parallel do collapse(2) default(none) &
-      !$omp shared(field, nx0, nxN, nz, ny0, nyN, alfa0, beta0, shift_x, shift_z) private(ix, iz, ph)
-      do ix = nx0, nxN
-        do iz = -nz, nz
-          ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
-          field(nyN + 1, iz, ix) = field(ny0, iz, ix)*ph
-          field(nyN + 2, iz, ix) = field(ny0 + 1, iz, ix)*ph
-          field(ny0 - 1, iz, ix) = field(nyN, iz, ix)*conjg(ph)
-          field(ny0 - 2, iz, ix) = field(nyN - 1, iz, ix)*conjg(ph)
-        end do
-      end do
+      call wrap_rows(field)
+      if (nf == 2) call wrap_rows(field2)
       return
     end if
-    ! pack: (.., 1) the two lowest rows, for the slab below; (.., 2) the two highest, for the slab above
-    !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(field, ghost_send, nx0, nxN, nz, ny0, nyN) private(ix, iz, k)
-    do ix = nx0, nxN
-      do iz = -nz, nz
-        do k = 1, 2
-          ghost_send(k, iz, ix, 1) = field(ny0 + k - 1, iz, ix)
-          ghost_send(k, iz, ix, 2) = field(nyN + k - 2, iz, ix)
-        end do
-      end do
-    end do
+    call pack_rows(field, 1)
+    if (nf == 2) call pack_rows(field2, 2)
     up = mod(ipy + 1, npy)
     down = mod(ipy - 1 + npy, npy)
+    count = size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3)*nf     ! elements per direction
 #ifdef HAVE_CUDA
     !$omp target data use_device_addr(ghost_send, ghost_recv)
 #endif
     if (use_nccl_y) then
 #ifdef HAVE_NCCL
-      ! the two rows for the slab above and those for the slab below as
-      ! two groups (with two slabs both neighbours are the same rank)
-      nbytes = 16_C_SIZE_T*int(size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3), C_SIZE_T)
+      ! the rows for the slab above and those for the slab below as two
+      ! groups (with two slabs both neighbours are the same rank)
+      nbytes = 16_C_SIZE_T*int(count, C_SIZE_T)
       if (timing) then
         r = cudaStreamSynchronize(compute_stream); t0 = MPI_Wtime()
       end if
       r = ncclGroupStart()
-      r = ncclSend(c_loc(ghost_send(1, -nz, nx0, 2)), nbytes, NCCL_UINT8, up, nccl_comm_y, nccl_ystream)
-      r = ncclRecv(c_loc(ghost_recv(1, -nz, nx0, 1)), nbytes, NCCL_UINT8, down, nccl_comm_y, nccl_ystream)
+      r = ncclSend(c_loc(ghost_send(1, -nz, nx0, 1, 2)), nbytes, NCCL_UINT8, up, nccl_comm_y, nccl_ystream)
+      r = ncclRecv(c_loc(ghost_recv(1, -nz, nx0, 1, 1)), nbytes, NCCL_UINT8, down, nccl_comm_y, nccl_ystream)
       r = ncclGroupEnd()
       if (r /= 0) error stop 'NCCL ghost row exchange failed'
       r = ncclGroupStart()
-      r = ncclSend(c_loc(ghost_send(1, -nz, nx0, 1)), nbytes, NCCL_UINT8, down, nccl_comm_y, nccl_ystream)
-      r = ncclRecv(c_loc(ghost_recv(1, -nz, nx0, 2)), nbytes, NCCL_UINT8, up, nccl_comm_y, nccl_ystream)
+      r = ncclSend(c_loc(ghost_send(1, -nz, nx0, 1, 1)), nbytes, NCCL_UINT8, down, nccl_comm_y, nccl_ystream)
+      r = ncclRecv(c_loc(ghost_recv(1, -nz, nx0, 1, 2)), nbytes, NCCL_UINT8, up, nccl_comm_y, nccl_ystream)
       r = ncclGroupEnd()
       if (r /= 0) error stop 'NCCL ghost row exchange failed'
       if (timing) then
@@ -334,32 +322,77 @@ contains
       ierr = cudaStreamSynchronize(compute_stream)
 #endif
       t0 = MPI_Wtime()
-      call MPI_Sendrecv(ghost_send(:, :, :, 2), size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3), &
-                        MPI_DOUBLE_COMPLEX, up, 1, ghost_recv(:, :, :, 1), size(ghost_recv, 1)*size(ghost_recv, 2)*size(ghost_recv, 3), &
-                        MPI_DOUBLE_COMPLEX, down, 1, comm_y, MPI_STATUS_IGNORE, ierr)
-      call MPI_Sendrecv(ghost_send(:, :, :, 1), size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3), &
-                        MPI_DOUBLE_COMPLEX, down, 2, ghost_recv(:, :, :, 2), size(ghost_recv, 1)*size(ghost_recv, 2)*size(ghost_recv, 3), &
-                        MPI_DOUBLE_COMPLEX, up, 2, comm_y, MPI_STATUS_IGNORE, ierr)
+      call MPI_Sendrecv(ghost_send(:, :, :, 1:nf, 2), count, MPI_DOUBLE_COMPLEX, up, 1, &
+                        ghost_recv(:, :, :, 1:nf, 1), count, MPI_DOUBLE_COMPLEX, down, 1, comm_y, MPI_STATUS_IGNORE, ierr)
+      call MPI_Sendrecv(ghost_send(:, :, :, 1:nf, 1), count, MPI_DOUBLE_COMPLEX, down, 2, &
+                        ghost_recv(:, :, :, 1:nf, 2), count, MPI_DOUBLE_COMPLEX, up, 2, comm_y, MPI_STATUS_IGNORE, ierr)
       if (timing) t_ghost = t_ghost + MPI_Wtime() - t0
     end if
 #ifdef HAVE_CUDA
     !$omp end target data
 #endif
-    ! unpack: (.., 1) came from below (rows ny0-2, ny0-1), (.., 2) from above (rows nyN+1, nyN+2)
-    !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(field, ghost_recv, nx0, nxN, nz, ny0, nyN, ipy, npy, alfa0, beta0, shift_x, shift_z) &
-    !$omp private(ix, iz, k, ph, f_below, f_above)
-    do ix = nx0, nxN
-      do iz = -nz, nz
-        do k = 1, 2
+    call unpack_rows(field, 1)
+    if (nf == 2) call unpack_rows(field2, 2)
+
+  contains
+
+    ! the shear-periodic wrap of a single slab
+    subroutine wrap_rows(f)
+      complex(C_DOUBLE_COMPLEX), intent(inout) :: f(ny0 - 2:, -nz:, nx0:)
+      integer(C_INT) :: ix, iz
+      complex(C_DOUBLE_COMPLEX) :: ph
+      !$omp target teams distribute parallel do collapse(2) default(none) &
+      !$omp shared(f, nx0, nxN, nz, ny0, nyN, alfa0, beta0, shift_x, shift_z) private(ix, iz, ph)
+      do ix = nx0, nxN
+        do iz = -nz, nz
           ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
-          f_below = 1.0d0; if (ipy == 0) f_below = conjg(ph)
-          f_above = 1.0d0; if (ipy == npy - 1) f_above = ph
-          field(ny0 - 3 + k, iz, ix) = ghost_recv(k, iz, ix, 1)*f_below
-          field(nyN + k, iz, ix) = ghost_recv(k, iz, ix, 2)*f_above
+          f(nyN + 1, iz, ix) = f(ny0, iz, ix)*ph
+          f(nyN + 2, iz, ix) = f(ny0 + 1, iz, ix)*ph
+          f(ny0 - 1, iz, ix) = f(nyN, iz, ix)*conjg(ph)
+          f(ny0 - 2, iz, ix) = f(nyN - 1, iz, ix)*conjg(ph)
         end do
       end do
-    end do
+    end subroutine wrap_rows
+
+    ! pack field slot jf: (.., jf, 1) the two lowest rows, for the slab below; (.., jf, 2) the two highest, for the slab above
+    subroutine pack_rows(f, jf)
+      complex(C_DOUBLE_COMPLEX), intent(in) :: f(ny0 - 2:, -nz:, nx0:)
+      integer(C_INT), intent(in) :: jf
+      integer(C_INT) :: ix, iz, k
+      !$omp target teams distribute parallel do collapse(3) default(none) &
+      !$omp shared(f, ghost_send, nx0, nxN, nz, ny0, nyN, jf) private(ix, iz, k)
+      do ix = nx0, nxN
+        do iz = -nz, nz
+          do k = 1, 2
+            ghost_send(k, iz, ix, jf, 1) = f(ny0 + k - 1, iz, ix)
+            ghost_send(k, iz, ix, jf, 2) = f(nyN + k - 2, iz, ix)
+          end do
+        end do
+      end do
+    end subroutine pack_rows
+
+    ! unpack field slot jf: (.., jf, 1) came from below (rows ny0-2, ny0-1), (.., jf, 2) from above (rows nyN+1, nyN+2)
+    subroutine unpack_rows(f, jf)
+      complex(C_DOUBLE_COMPLEX), intent(inout) :: f(ny0 - 2:, -nz:, nx0:)
+      integer(C_INT), intent(in) :: jf
+      integer(C_INT) :: ix, iz, k
+      complex(C_DOUBLE_COMPLEX) :: ph, f_below, f_above
+      !$omp target teams distribute parallel do collapse(3) default(none) &
+      !$omp shared(f, ghost_recv, nx0, nxN, nz, ny0, nyN, ipy, npy, alfa0, beta0, shift_x, shift_z, jf) &
+      !$omp private(ix, iz, k, ph, f_below, f_above)
+      do ix = nx0, nxN
+        do iz = -nz, nz
+          do k = 1, 2
+            ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
+            f_below = 1.0d0; if (ipy == 0) f_below = conjg(ph)
+            f_above = 1.0d0; if (ipy == npy - 1) f_above = ph
+            f(ny0 - 3 + k, iz, ix) = ghost_recv(k, iz, ix, jf, 1)*f_below
+            f(nyN + k, iz, ix) = ghost_recv(k, iz, ix, jf, 2)*f_above
+          end do
+        end do
+      end do
+    end subroutine unpack_rows
+
   end subroutine exchange_ghost_rows
 
   ! The allgather over the y column of the line solver's records
