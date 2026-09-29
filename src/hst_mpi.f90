@@ -1,14 +1,20 @@
-! The x-z pencil decomposition and the transposes between its two layouts.
+! The decomposition (x-z pencils times y slabs), the transposes between
+! the two pencil layouts, the ghost-row exchange between slabs and the
+! allgather of the line solver's reduced systems.
 !
-! In spectral space (z-pencil) a rank owns the x modes nx0:nxN and every z
-! mode; in physical space (x-pencil) it owns the z lines nz0:nzN and every x
-! point.  Moving between the two is one alltoall over all ranks per field.
-! Each rank owns the whole of y (npy = 1): the y decomposition (npy slabs
-! of rows ny0:nyN, the ghost rows exchanged between neighbouring slabs and
-! the line solves coupled through a reduced interface system) lives on the
-! branch multinode-y and touches this file, hst_linsolve and hst_io only;
-! the physics files are written for any npy (DESIGN.md 7 (i)).  Here
-! exchange_ghost_rows is the shear-periodic wrap of one slab.
+! The nproc = npxz*npy ranks form npy slabs of nyB = ny/npy rows, each
+! split into npxz x-z pencils: in spectral space (z-pencil) a rank owns the
+! x modes nx0:nxN and every z mode of its rows, in physical space
+! (x-pencil) the z lines nz0:nzN and every x point.  Moving between the
+! two is one alltoall over the npxz ranks of the slab (comm_xz) per field;
+! the coupling along y (five-point stencils, line solves) goes between
+! neighbouring slabs through the four ghost rows of every field
+! (exchange_ghost_rows) and, for the line solves, through the allgather
+! of the slabs' reduced systems over the y column (allgather_y_start, comm_y);
+! see hst_linsolve.  One slab per node keeps the alltoalls on NVLink
+! (mpirun --map-by ppr:npxz:node).  The physics files know nothing of this
+! (DESIGN.md 7 (i)); with npy = 1 this file is the x-z pencil code of the
+! main branch, the ghost rows being the shear-periodic wrap of the slab.
 !
 ! A transpose is done in two halves so that the alltoall of one field can
 ! overlap the transforms of the next (the channel's CHANNEL_OVERLAPPING):
@@ -20,7 +26,10 @@
 ! MPI_Ialltoall, waited for in finish) or, in a build with NCCL=1 and one
 ! GPU per rank, through NCCL as grouped send/recv pairs on a second CUDA
 ! stream, ordered against the OpenMP target stream by two events, so that
-! the host never waits (deck parameter transport).
+! the host never waits (deck parameter transport).  The y exchanges use
+! a second NCCL communicator over the y column on the target stream
+! itself (MPI on the device buffers otherwise): across nodes MPI's device
+! path is several times slower than NCCL's (FINDINGS.md).
 !
 ! Taken from channel/src/mpi/mpi_transpose.f90 with the y-slab machinery
 ! and HIP removed.  The pack kernels are block copies (the alltoall
@@ -43,7 +52,7 @@ module hst_mpi
   implicit none
   private
 
-  public :: setup_decomposition, free_mpi, exchange_ghost_rows
+  public :: setup_decomposition, free_mpi, exchange_ghost_rows, allgather_y_start, allgather_y_wait, NPY_MAX
   public :: transpose_zTOx_start, transpose_zTOx_finish, transpose_xTOz_start, transpose_xTOz_finish
 
   ! the two buffer pairs of the double buffering
@@ -51,13 +60,21 @@ module hst_mpi
   integer(C_INT), save :: sendcount                ! elements per peer, one field
   !$omp declare target(sendcount)
   logical, save :: transpose_is_local
-  logical, save :: use_nccl = .false.
+  logical, save :: use_nccl = .false., use_nccl_y = .false.   ! NCCL for the alltoall (comm_xz); for the y exchanges (comm_y)
+  integer, save :: node_ranks                                   ! ranks per node (setup_decomposition)
+  integer(C_INT), parameter :: NPY_MAX = 8                      ! slabs per line: the reduced system is at most 16 x 16 (hst_linsolve)
   type(MPI_Request), save :: req(2)
 #ifdef HAVE_CUDA
   integer(kind=cuda_stream_kind), save :: compute_stream, comm_stream
   type(cudaEvent), save :: ev_packed(2), ev_done(2)  ! pack done (compute stream), alltoall done (comm stream)
+  type(cudaEvent), save :: ev_rec(2), ev_gath(2)     ! records written (compute stream), gathered (comm stream), per workspace
 #endif
   integer(C_INT), parameter :: TILE = 32, ROWS_PER_THREAD = 4   ! transpose_tiled: tile edge, rows per thread
+  type(MPI_Comm), save :: comm_xz, comm_y                       ! the ranks of a slab; the ranks of a y column
+  real(C_DOUBLE), save :: t_ghost = 0.0d0, t_gather = 0.0d0     ! time in the y exchanges (timing = .true.)
+  ! the two rows of up to two fields sent to and received from each neighbouring slab
+  ! (exchange_ghost_rows): (2 rows, z, x, field, direction), one direction's fields contiguous
+  complex(C_DOUBLE_COMPLEX), allocatable, target, save :: ghost_send(:, :, :, :, :), ghost_recv(:, :, :, :, :)
 
 #ifdef HAVE_NCCL
   ! NCCL through its C prototypes (nccl.h).  The Fortran module of NVHPC
@@ -66,7 +83,8 @@ module hst_mpi
     integer(C_INT8_T) :: bytes(128)
   end type nccl_unique_id
   integer(C_INT), parameter :: NCCL_UINT8 = 1
-  type(C_PTR), save :: nccl_comm = C_NULL_PTR, nccl_stream = C_NULL_PTR
+  type(C_PTR), save :: nccl_comm = C_NULL_PTR, nccl_stream = C_NULL_PTR     ! the slab's communicator, on comm_stream
+  type(C_PTR), save :: nccl_comm_y = C_NULL_PTR, nccl_ystream = C_NULL_PTR  ! the y column's, on the compute stream
   interface
     function ncclGetUniqueId(id) bind(c, name='ncclGetUniqueId') result(r)
       import :: nccl_unique_id, C_INT
@@ -107,6 +125,13 @@ module hst_mpi
       integer(C_INT), value :: dtype, peer
       integer(C_INT) :: r
     end function ncclRecv
+    function ncclAllGather(sendbuf, recvbuf, count, dtype, comm, stream) bind(c, name='ncclAllGather') result(r)
+      import :: C_INT, C_PTR, C_SIZE_T
+      type(C_PTR), value :: sendbuf, recvbuf, comm, stream
+      integer(C_SIZE_T), value :: count
+      integer(C_INT), value :: dtype
+      integer(C_INT) :: r
+    end function ncclAllGather
   end interface
 #endif
   integer :: ierr
@@ -115,19 +140,53 @@ contains
 
   ! npxz = nproc/npy ranks each own nxB = (nx+1)/npxz x modes in spectral
   ! space and nzB = nzd/npxz z lines in physical space (the alltoall needs
-  ! both splits to be even), and npy slabs own nyB = ny/npy rows each.
-  ! This version has npy = 1: the slab is the whole of y.
+  ! both splits to be even), and npy slabs own nyB = ny/npy rows each (at
+  ! least 8, so that the line solver's four rows next to the borders are
+  ! distinct).  The npxz ranks of a slab are consecutive: ipy = iproc/npxz,
+  ! ipxz = mod(iproc, npxz).  npy = 0 (the default) lets the code choose:
+  ! one slab per node when that fits the grid, so that every alltoall stays
+  ! inside a node, otherwise one slab.  With more than one slab the ranks
+  ! of a node must be consecutive in MPI_COMM_WORLD, as mpirun --map-by
+  ! ppr:N:node and Slurm's block distribution give.
   subroutine setup_decomposition()
     integer(C_SIZE_T) :: n
+    type(MPI_Comm) :: node
+    integer :: node_rank, nnodes, npxz_node
+    logical :: consecutive
 
-    if (npy == 0) npy = 1          ! npy = 0, the default: the code chooses; here that is one slab
-    if (npy /= 1) then
-      if (has_terminal) print *, 'ERROR: npy > 1 (the y decomposition) is on the branch multinode-y'
+    call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, node, ierr)
+    call MPI_Comm_size(node, node_ranks, ierr)
+    call MPI_Comm_rank(node, node_rank, ierr)
+    call MPI_Comm_free(node, ierr)
+    call MPI_Allreduce(MPI_IN_PLACE, node_ranks, 1, MPI_INTEGER, MPI_MAX, MPI_COMM_WORLD, ierr)
+    consecutive = (node_rank == mod(iproc, node_ranks))
+    call MPI_Allreduce(MPI_IN_PLACE, consecutive, 1, MPI_LOGICAL, MPI_LAND, MPI_COMM_WORLD, ierr)
+    consecutive = consecutive .and. mod(nproc, node_ranks) == 0      ! the same number of ranks on every node
+    nnodes = nproc/node_ranks
+    if (npy == 0) then
+      npy = 1
+      npxz_node = nproc/nnodes
+      if (consecutive .and. nnodes > 1 .and. nnodes <= NPY_MAX .and. mod(ny, nnodes) == 0 .and. ny/nnodes >= 8 &
+          .and. mod(nx + 1, npxz_node) == 0 .and. mod(nzd, npxz_node) == 0) npy = nnodes
+      if (has_terminal .and. nnodes > 1 .and. npy == 1) write (*, '(A,I0,A)') &
+        '   npy = 0: one slab per node (', nnodes, ' nodes) does not fit this grid or rank layout, taking one slab'
+    else if (npy > 1 .and. .not. consecutive) then
+      if (has_terminal) print *, 'ERROR: with npy > 1 every node must hold the same number of ranks, consecutive in', &
+        ' MPI_COMM_WORLD (mpirun --map-by ppr:N:node, Slurm block distribution)'
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
+    if (npy < 1 .or. mod(nproc, npy) /= 0 .or. mod(ny, npy) /= 0 .or. ny/max(npy, 1) < 8) then
+      if (has_terminal) then
+        print *, 'ERROR: npy must divide nproc and ny, with at least 8 rows per slab.'
+        print *, '       nproc =', nproc, ' ny =', ny, ' npy =', npy
+      end if
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
     end if
     npxz = nproc/npy
     ipy = iproc/npxz
     ipxz = mod(iproc, npxz)
+    call MPI_Comm_split(MPI_COMM_WORLD, ipy, ipxz, comm_xz, ierr)
+    call MPI_Comm_split(MPI_COMM_WORLD, ipxz, ipy, comm_y, ierr)
     if (mod(nx + 1, npxz) /= 0 .or. mod(nzd, npxz) /= 0) then
       if (has_terminal) then
         print *, 'ERROR: the number of x-z pencils must divide both nx+1 and nzd.'
@@ -146,7 +205,16 @@ contains
     nyN = ny0 + nyB - 1
     has_average = (nx0 == 0)
     !$omp target update to(nx0, nxN, nxB, nz0, nzN, nzB, ny0, nyN, ny, ni, S)
-    if (has_terminal) write (*, '(A,I5,A,I5,A,I5)') '   ranks =', nproc, '   nxB   =', nxB, '   nzB   =', nzB
+    if (has_terminal) write (*, '(A,I5,A,I3,A,I3,A,I5,A,I5,A,I5)') '   ranks =', nproc, ' (', npxz, ' x-z pencils x', npy, &
+      ' y slabs)   nxB =', nxB, '   nzB =', nzB, '   nyB =', nyB
+#ifdef HAVE_CUDA
+    compute_stream = transfer(target_stream(), compute_stream)
+#endif
+    if (npy > 1) then
+      allocate (ghost_send(2, -nz:nz, nx0:nxN, 2, 2), ghost_recv(2, -nz:nz, nx0:nxN, 2, 2))
+      ghost_send = 0; ghost_recv = 0
+      !$omp target enter data map(to: ghost_send, ghost_recv)
+    end if
 
     transpose_is_local = (nzB == nzd)
     sendcount = nxB*nzB*(nyN - ny0 + 5)            ! one field, ghost rows included
@@ -162,6 +230,7 @@ contains
   subroutine free_mpi()
 #ifdef HAVE_NCCL
     if (use_nccl) ierr = ncclCommDestroy(nccl_comm)
+    if (use_nccl_y) ierr = ncclCommDestroy(nccl_comm_y)
 #endif
 #ifdef HAVE_CUDA
     if (.not. transpose_is_local) then
@@ -172,6 +241,16 @@ contains
 #endif
     !$omp target exit data map(delete: sendbuf, recvbuf)
     deallocate (sendbuf, recvbuf)
+    if (npy > 1) then
+      !$omp target exit data map(delete: ghost_send, ghost_recv)
+      deallocate (ghost_send, ghost_recv)
+      ! the transfers alone (after the device has finished the pack), a
+      ! part of the phases of hst_timer's table
+      if (timing .and. has_terminal) write (*, '(A,F9.5,A,F9.5,A)') '     of which y exchange (transfers only): ghost rows', &
+        t_ghost/max(istep, 1_C_SIZE_T), ' s/step, reduced systems (exposed)', t_gather/max(istep, 1_C_SIZE_T), ' s/step'
+    end if
+    call MPI_Comm_free(comm_xz, ierr)
+    call MPI_Comm_free(comm_y, ierr)
   end subroutine free_mpi
 
   !------------------------------------------------------------------------
@@ -183,15 +262,81 @@ contains
   ! shift_x, shift_z of the upper image (hst_derivatives):
   !   f(ny) = f(0) ph,  f(ny+1) = f(1) ph,  f(-1) = f(ny-1) conjg(ph),  f(-2) = f(ny-2) conjg(ph).
   ! With one slab both neighbours are the rank itself and the exchange is
-  ! this wrap.  A second field, if given, gets the same treatment (on the
-  ! branch the two travel in one message per direction).
+  ! this wrap, done in place.  With more, the two rows for each neighbour
+  ! are packed (a row is strided in memory), exchanged over comm_y with
+  ! NCCL on the compute stream (two send/receive pairs between the pack
+  ! and the unpack, the host does not wait) or with MPI on the device
+  ! buffers, and unpacked with the phase on the slabs at the box edge.
+  ! A second field, if given, travels in the same messages: the buffers
+  ! hold nf fields per direction, contiguous (u and w at the end of
+  ! linsolve, so that an inter-node exchange's fixed cost is paid once).
   subroutine exchange_ghost_rows(field, shift_x, shift_z, field2)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
     real(C_DOUBLE), intent(in) :: shift_x, shift_z
     complex(C_DOUBLE_COMPLEX), intent(inout), optional :: field2(ny0 - 2:, -nz:, nx0:)
-    call wrap_rows(field)
-    if (present(field2)) call wrap_rows(field2)     ! (an absent optional must stay out of the target region)
+    integer(C_INT) :: nf, count, up, down
+    real(C_DOUBLE) :: t0
+#ifdef HAVE_NCCL
+    integer(C_SIZE_T) :: nbytes
+    integer :: r
+#endif
+
+    nf = 1; if (present(field2)) nf = 2     ! (an absent optional must stay out of the target regions)
+    if (npy == 1) then
+      call wrap_rows(field)
+      if (nf == 2) call wrap_rows(field2)
+      return
+    end if
+    call pack_rows(field, 1)
+    if (nf == 2) call pack_rows(field2, 2)
+    up = mod(ipy + 1, npy)
+    down = mod(ipy - 1 + npy, npy)
+    count = size(ghost_send, 1)*size(ghost_send, 2)*size(ghost_send, 3)*nf     ! elements per direction
+#ifdef HAVE_CUDA
+    !$omp target data use_device_addr(ghost_send, ghost_recv)
+#endif
+    if (use_nccl_y) then
+#ifdef HAVE_NCCL
+      ! the rows for the slab above and those for the slab below as two
+      ! groups (with two slabs both neighbours are the same rank)
+      nbytes = 16_C_SIZE_T*int(count, C_SIZE_T)
+      if (timing) then
+        r = cudaStreamSynchronize(compute_stream); t0 = MPI_Wtime()
+      end if
+      r = ncclGroupStart()
+      r = ncclSend(c_loc(ghost_send(1, -nz, nx0, 1, 2)), nbytes, NCCL_UINT8, up, nccl_comm_y, nccl_ystream)
+      r = ncclRecv(c_loc(ghost_recv(1, -nz, nx0, 1, 1)), nbytes, NCCL_UINT8, down, nccl_comm_y, nccl_ystream)
+      r = ncclGroupEnd()
+      if (r /= 0) error stop 'NCCL ghost row exchange failed'
+      r = ncclGroupStart()
+      r = ncclSend(c_loc(ghost_send(1, -nz, nx0, 1, 1)), nbytes, NCCL_UINT8, down, nccl_comm_y, nccl_ystream)
+      r = ncclRecv(c_loc(ghost_recv(1, -nz, nx0, 1, 2)), nbytes, NCCL_UINT8, up, nccl_comm_y, nccl_ystream)
+      r = ncclGroupEnd()
+      if (r /= 0) error stop 'NCCL ghost row exchange failed'
+      if (timing) then
+        r = cudaStreamSynchronize(compute_stream); t_ghost = t_ghost + MPI_Wtime() - t0
+      end if
+#endif
+    else
+#ifdef HAVE_CUDA
+      ierr = cudaStreamSynchronize(compute_stream)
+#endif
+      t0 = MPI_Wtime()
+      call MPI_Sendrecv(ghost_send(:, :, :, 1:nf, 2), count, MPI_DOUBLE_COMPLEX, up, 1, &
+                        ghost_recv(:, :, :, 1:nf, 1), count, MPI_DOUBLE_COMPLEX, down, 1, comm_y, MPI_STATUS_IGNORE, ierr)
+      call MPI_Sendrecv(ghost_send(:, :, :, 1:nf, 1), count, MPI_DOUBLE_COMPLEX, down, 2, &
+                        ghost_recv(:, :, :, 1:nf, 2), count, MPI_DOUBLE_COMPLEX, up, 2, comm_y, MPI_STATUS_IGNORE, ierr)
+      if (timing) t_ghost = t_ghost + MPI_Wtime() - t0
+    end if
+#ifdef HAVE_CUDA
+    !$omp end target data
+#endif
+    call unpack_rows(field, 1)
+    if (nf == 2) call unpack_rows(field2, 2)
+
   contains
+
+    ! the shear-periodic wrap of a single slab
     subroutine wrap_rows(f)
       complex(C_DOUBLE_COMPLEX), intent(inout) :: f(ny0 - 2:, -nz:, nx0:)
       integer(C_INT) :: ix, iz
@@ -208,46 +353,178 @@ contains
         end do
       end do
     end subroutine wrap_rows
+
+    ! pack field slot jf: (.., jf, 1) the two lowest rows, for the slab below; (.., jf, 2) the two highest, for the slab above
+    subroutine pack_rows(f, jf)
+      complex(C_DOUBLE_COMPLEX), intent(in) :: f(ny0 - 2:, -nz:, nx0:)
+      integer(C_INT), intent(in) :: jf
+      integer(C_INT) :: ix, iz, k
+      !$omp target teams distribute parallel do collapse(3) default(none) &
+      !$omp shared(f, ghost_send, nx0, nxN, nz, ny0, nyN, jf) private(ix, iz, k)
+      do ix = nx0, nxN
+        do iz = -nz, nz
+          do k = 1, 2
+            ghost_send(k, iz, ix, jf, 1) = f(ny0 + k - 1, iz, ix)
+            ghost_send(k, iz, ix, jf, 2) = f(nyN + k - 2, iz, ix)
+          end do
+        end do
+      end do
+    end subroutine pack_rows
+
+    ! unpack field slot jf: (.., jf, 1) came from below (rows ny0-2, ny0-1), (.., jf, 2) from above (rows nyN+1, nyN+2)
+    subroutine unpack_rows(f, jf)
+      complex(C_DOUBLE_COMPLEX), intent(inout) :: f(ny0 - 2:, -nz:, nx0:)
+      integer(C_INT), intent(in) :: jf
+      integer(C_INT) :: ix, iz, k
+      complex(C_DOUBLE_COMPLEX) :: ph, f_below, f_above
+      !$omp target teams distribute parallel do collapse(3) default(none) &
+      !$omp shared(f, ghost_recv, nx0, nxN, nz, ny0, nyN, ipy, npy, alfa0, beta0, shift_x, shift_z, jf) &
+      !$omp private(ix, iz, k, ph, f_below, f_above)
+      do ix = nx0, nxN
+        do iz = -nz, nz
+          do k = 1, 2
+            ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
+            f_below = 1.0d0; if (ipy == 0) f_below = conjg(ph)
+            f_above = 1.0d0; if (ipy == npy - 1) f_above = ph
+            f(ny0 - 3 + k, iz, ix) = ghost_recv(k, iz, ix, jf, 1)*f_below
+            f(nyN + k, iz, ix) = ghost_recv(k, iz, ix, jf, 2)*f_above
+          end do
+        end do
+      end do
+    end subroutine unpack_rows
+
   end subroutine exchange_ghost_rows
+
+  ! The allgather over the y column of the line solver's records
+  ! (hst_linsolve): a(:, first:first+count-1, s+1) is slab s's block of one
+  ! workspace w; block ipy holds this rank's records, the others are filled
+  ! with the other slabs' (one send and one receive per other slab: the
+  ! blocks of a workspace are not contiguous over the slabs, so NCCL's
+  ! allgather does not apply).  NCCL: on the communication stream, which
+  ! waits for the compute stream through ev_rec(w); allgather_y_wait makes
+  ! the compute stream wait for the transfer through ev_gath(w), so that
+  ! the forward sweep of the other workspace runs meanwhile and the host
+  ! never blocks.  MPI: on the device buffer, the host waits.
+  subroutine allgather_y_start(a, first, count, w)
+    real(C_DOUBLE), intent(inout), contiguous, target :: a(:, :, :)
+    integer(C_INT), intent(in) :: first, count, w
+    integer :: s, peer
+    real(C_DOUBLE) :: t0
+#ifdef HAVE_NCCL
+    integer(C_SIZE_T) :: nbytes
+    integer :: r
+#endif
+    if (npy == 1) return
+#ifdef HAVE_CUDA
+    !$omp target data use_device_addr(a)
+#endif
+    if (use_nccl_y) then
+#ifdef HAVE_NCCL
+      nbytes = 8_C_SIZE_T*int(size(a, 1), C_SIZE_T)*int(count, C_SIZE_T)
+      r = cudaEventRecord(ev_rec(w), compute_stream)
+      r = cudaStreamWaitEvent(comm_stream, ev_rec(w), 0)
+      r = ncclGroupStart()
+      do s = 1, npy - 1
+        peer = mod(ipy + s, npy)
+        r = ncclSend(c_loc(a(1, first, ipy + 1)), nbytes, NCCL_UINT8, peer, nccl_comm_y, nccl_stream)
+        r = ncclRecv(c_loc(a(1, first, peer + 1)), nbytes, NCCL_UINT8, peer, nccl_comm_y, nccl_stream)
+      end do
+      r = ncclGroupEnd()
+      if (r /= 0) error stop 'NCCL allgather over the y column failed'
+      r = cudaEventRecord(ev_gath(w), comm_stream)
+#endif
+    else
+#ifdef HAVE_CUDA
+      ierr = cudaStreamSynchronize(compute_stream)
+#endif
+      t0 = MPI_Wtime()
+      do s = 1, npy - 1                       ! shift s: send to slab ipy + s, receive slab ipy - s's block
+        peer = mod(ipy - s + npy, npy)
+        call MPI_Sendrecv(a(:, first:first + count - 1, ipy + 1), size(a, 1)*count, MPI_DOUBLE_PRECISION, mod(ipy + s, npy), 3, &
+                          a(:, first:first + count - 1, peer + 1), size(a, 1)*count, MPI_DOUBLE_PRECISION, peer, 3, &
+                          comm_y, MPI_STATUS_IGNORE, ierr)
+      end do
+      if (timing) t_gather = t_gather + MPI_Wtime() - t0
+    end if
+#ifdef HAVE_CUDA
+    !$omp end target data
+#endif
+  end subroutine allgather_y_start
+
+  ! The compute stream waits for the gather of workspace w (with timing the
+  ! host measures the part not hidden behind the compute stream's work).
+  subroutine allgather_y_wait(w)
+    integer(C_INT), intent(in) :: w
+#ifdef HAVE_NCCL
+    integer :: r
+    real(C_DOUBLE) :: t0
+    if (npy == 1 .or. .not. use_nccl_y) return
+    if (timing) then
+      r = cudaStreamSynchronize(compute_stream); t0 = MPI_Wtime()
+      r = cudaEventSynchronize(ev_gath(w)); t_gather = t_gather + MPI_Wtime() - t0
+    end if
+    r = cudaStreamWaitEvent(compute_stream, ev_gath(w), 0)
+#endif
+  end subroutine allgather_y_wait
 
   ! transport = 'nccl' needs a build with NCCL=1 and one GPU per rank;
   ! 'auto' takes NCCL when both hold and MPI otherwise.  One rank needs no
   ! transport at all.  On the GPU the alltoall runs on its own stream
   ! (NCCL) or is started by the host once the compute stream has packed
-  ! (MPI); the events order the two streams.
+  ! (MPI); the events order the two streams.  The y exchanges (ghost rows,
+  ! reduced systems) go through a second NCCL communicator over the y
+  ! column, the ghost rows on the compute stream itself, the records on
+  ! the communication stream (allgather_y_start), or through MPI on the
+  ! device buffers.
   subroutine setup_transport()
 #ifdef HAVE_NCCL
     type(nccl_unique_id) :: id
-    type(MPI_Comm) :: node
-    integer :: node_ranks, r
+    integer :: r
 #endif
+    character(len=4) :: xz_name, y_name
     use_nccl = .false.
-    if (transpose_is_local) return
+    use_nccl_y = .false.
+    if (transpose_is_local .and. npy == 1) return
 #ifdef HAVE_CUDA
-    compute_stream = transfer(target_stream(), compute_stream)
     ierr = cudaStreamCreateWithFlags(comm_stream, cudaStreamNonBlocking)
     ierr = cudaEventCreateWithFlags(ev_packed(1), cudaEventDisableTiming)
     ierr = cudaEventCreateWithFlags(ev_packed(2), cudaEventDisableTiming)
     ierr = cudaEventCreateWithFlags(ev_done(1), cudaEventDisableTiming)
     ierr = cudaEventCreateWithFlags(ev_done(2), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_rec(1), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_rec(2), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_gath(1), cudaEventDisableTiming)
+    ierr = cudaEventCreateWithFlags(ev_gath(2), cudaEventDisableTiming)
 #endif
     if (transport /= 'mpi') then
 #ifdef HAVE_NCCL
-      call MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0, MPI_INFO_NULL, node, ierr)
-      call MPI_Comm_size(node, node_ranks, ierr)
-      call MPI_Comm_free(node, ierr)
-      call MPI_Allreduce(MPI_IN_PLACE, node_ranks, 1, MPI_INTEGER, MPI_MAX, MPI_COMM_WORLD, ierr)
       if (node_ranks <= omp_get_num_devices()) then
-        if (iproc == 0) r = ncclGetUniqueId(id)
-        call MPI_Bcast(id%bytes, 128, MPI_BYTE, 0, MPI_COMM_WORLD, ierr)
         r = cudaSetDevice(omp_get_default_device())
-        r = ncclCommInitRank(nccl_comm, nproc, id, iproc)
-        if (r /= 0) then
-          if (has_terminal) print *, 'ERROR: ncclCommInitRank failed with code', r
-          call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+        if (.not. transpose_is_local) then
+          ! one NCCL communicator per slab, its id made by the slab's first rank
+          if (ipxz == 0) r = ncclGetUniqueId(id)
+          call MPI_Bcast(id%bytes, 128, MPI_BYTE, 0, comm_xz, ierr)
+          r = ncclCommInitRank(nccl_comm, npxz, id, ipxz)
+          if (r /= 0) then
+            if (has_terminal) print *, 'ERROR: ncclCommInitRank failed with code', r
+            call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+          end if
+          nccl_stream = transfer(comm_stream, nccl_stream)
+          use_nccl = .true.
         end if
-        nccl_stream = transfer(comm_stream, nccl_stream)
-        use_nccl = .true.
+        if (npy > 1) then
+          ! and one per y column, its id made by the column's first slab
+          if (ipy == 0) r = ncclGetUniqueId(id)
+          call MPI_Bcast(id%bytes, 128, MPI_BYTE, 0, comm_y, ierr)
+          r = ncclCommInitRank(nccl_comm_y, npy, id, ipy)
+          if (r /= 0) then
+            if (has_terminal) print *, 'ERROR: ncclCommInitRank (y column) failed with code', r
+            call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+          end if
+          nccl_ystream = transfer(compute_stream, nccl_ystream)
+          nccl_stream = transfer(comm_stream, nccl_stream)
+          use_nccl_y = .true.
+        end if
       else if (transport == 'nccl') then
         if (has_terminal) print *, 'ERROR: transport = nccl needs one GPU per rank'
         call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
@@ -259,7 +536,16 @@ contains
       end if
 #endif
     end if
-    if (has_terminal) write (*, '(A,A)') '   alltoall transport: ', merge('nccl', 'mpi ', use_nccl)
+    if (has_terminal) then
+      xz_name = merge('nccl', 'mpi ', use_nccl)
+      if (transpose_is_local) xz_name = 'none'
+      y_name = merge('nccl', 'mpi ', use_nccl_y)
+      if (npy > 1) then
+        write (*, '(A,A,A,A)') '   alltoall transport: ', xz_name, ',  y exchange: ', y_name
+      else
+        write (*, '(A,A)') '   alltoall transport: ', xz_name
+      end if
+    end if
   end subroutine setup_transport
 
   !------------------------------------------------------------------------
@@ -383,8 +669,8 @@ contains
   end subroutine transpose_tile_kernel
 #endif
 
-  ! The one collective of the solver, started on buffer pair b after the
-  ! pack and waited for before the unpack.  On the GPU the buffers stay on
+  ! The collective of the transposes, over the ranks of the slab, started
+  ! on buffer pair b after the pack and waited for before the unpack.  On the GPU the buffers stay on
   ! the device: the use_device_addr block hands MPI (CUDA-aware) or NCCL
   ! their device addresses.  NCCL: one send and one receive per peer in a
   ! group (NCCL has no alltoall) on the communication stream, which waits
@@ -422,7 +708,7 @@ contains
       ierr = cudaStreamSynchronize(compute_stream)
 #endif
       call MPI_Ialltoall(sendbuf(:, b), int(sendcount), MPI_DOUBLE_COMPLEX, &
-                         recvbuf(:, b), int(sendcount), MPI_DOUBLE_COMPLEX, MPI_COMM_WORLD, req(b), ierr)
+                         recvbuf(:, b), int(sendcount), MPI_DOUBLE_COMPLEX, comm_xz, req(b), ierr)
       if (ierr /= MPI_SUCCESS) error stop 'MPI_Ialltoall failed'
     end if
 #ifdef HAVE_CUDA
