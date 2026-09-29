@@ -1,22 +1,36 @@
 ! Runtime statistics in the layout of the CPL code (io.cpl, spanwShear
 ! variant), reduced on the device and written by the terminal rank.  With
 ! a Stokes layer, stokes_runtime.dat adds  time  energy_out  energy_in
-! diss_out  diss_in  (region averages of <u_i u_i> and <grad u : grad u>,
+! diss_out  diss_in  (region averages of <u_i u_i>/2 and nu <grad u : grad u>,
 ! outside and inside |y - ly/2| < 8 delta, as the StokesLayer variant of
 ! io.cpl).
 !
+! All statistics are *y-averaged* (box-mean) quantities: the fluctuation
+! moments are formed by Parseval's theorem along the spectral directions
+! (x streamwise, z spanwise) and then averaged over the shear direction y,
+! so every column has the units of a spatial mean per unit volume and is
+! ready to use without further rescaling.  The kinematic viscosity nu = 1/re
+! is folded into the dissipation.
+!
 ! Runtimedata columns:
 !   time  meanflowx  meanflowy  S  S2  gamma_x  gamma_y  deltat  cfl*deltat
-!   energy  diss  uw/2  vw/2
+!   energy  diss  uv  vw
 ! variances_runtime.dat columns:
-!   time  uu  vv  ww  uv
-! all in CPL naming (their v is our spanwise w, their w our vertical v) and
-! as integrals over the box height ly: energy = ly/2 <u_i u_i>, diss =
-! ly/2 <du_i/dx_j du_i/dx_j> (not multiplied by nu; here from the compact
-! derivatives, in CPL from centred differences), uw/2 = ly/2 <u v>,
-! vw/2 = ly/2 <w v>, and the variances uu = ly <u u> etc.  meanflowx/y are
-! the integrals of the mean profiles.  The (0,0) mode is excluded from the
-! fluctuation statistics; modes with ix > 0 count twice.
+!   time  uu  vv  ww  uw
+! all in the uniform (streamwise, shearwise, spanwise) = (u, v, w) naming of
+! this solver: x streamwise with the Fourier wavenumber alfa0, z spanwise
+! with beta0, y the compact-FD / shear direction (U = S*y) carrying v.
+! energy = <u_i u_i>/2 (the turbulent kinetic energy k),
+! diss = nu <du_i/dx_j du_i/dx_j> (dissipation, the pseudo-dissipation
+! nu<|grad u|^2>; here from the compact derivatives, in CPL from centred
+! differences), uv = <u v> and vw = <v w> are the Reynolds shear stresses
+! (no factor 1/2), and the variances uu = <u u> etc. are the mean normal
+! Reynolds stresses.  In variances_runtime.dat the last column is the
+! Reynolds shear stress uw = <u w>: the cross-correlation of the streamwise
+! and spanwise fluctuations (not <u v>).  meanflowx/y are
+! the integrals of the mean profiles (kept as integrals, as in CPL).
+! The (0,0) mode is excluded from the fluctuation statistics; modes with
+! ix > 0 count twice.
 module hst_stats
 
   use, intrinsic :: iso_c_binding
@@ -50,12 +64,13 @@ contains
     integer(C_INT) :: ix, iy, iz, c
     real(C_DOUBLE) :: w, eps, uv, uu, vv, ww, vw, uw, grad, mfx, mfz
     real(C_DOUBLE) :: q_in, q_out, e_in, e_out, g_in, g_out, l_in, l_out
-    real(C_DOUBLE) :: sums(13), q2
+    real(C_DOUBLE) :: sums(13), q2, inv_ly
     complex(C_DOUBLE_COMPLEX) :: cu, cv, cw, dq
     integer :: ierr
 
-    ! sums over modes and rows, each row weighted by its spacing dyl (so
-    ! the results are integrals over the box height)
+    ! sums over modes and rows, each row weighted by its spacing dyl: the
+    ! spectral (Parseval) sums over x and z give the horizontal mean via
+    ! the mode weight w, and integrating in y gives a box-height integral.
     eps = 0; uv = 0; uu = 0; vv = 0; ww = 0; vw = 0; uw = 0; mfx = 0; mfz = 0
     q_in = 0; q_out = 0; e_in = 0; e_out = 0
     !$omp target teams distribute parallel do collapse(3) default(none) &
@@ -120,17 +135,26 @@ contains
     mfx = sums(8); mfz = sums(9); q_in = sums(10); q_out = sums(11); e_in = sums(12); e_out = sums(13)
     q2 = uu + vv + ww
     if (has_terminal) then
-      ! energy = ly/2 <q2>, diss = ly/2 <grad u : grad u>, stresses ly/2 <..>, variances ly <..>
+      ! Convert the box-height integrals to y-averaged (box-mean) quantities
+      ! with physically-meaningful units (mean per unit volume), so nothing
+      ! downstream needs to remember the ly, 1/2 or nu factors:
+      !   energy = q2/(2 ly)          = <u_i u_i>/2            (TKE k)
+      !   diss   = ni*eps/ly          = nu <grad u : grad u>   (dissipation)
+      !   uv, vw = uv/ly, vw/ly       = <u v>, <v w>           (Reynolds shear)
+      !   uu..uw = uu/ly .. uw/ly     = <u u>, ...             (normal stresses)
+      ! with the kinematic viscosity nu = 1/re = ni.
+      inv_ly = 1.0d0/ly
       write (*, '(F12.5,2X,ES11.4,2X,F8.4,4(2X,ES13.6))') time, deltat, cfl*deltat, &
-        0.5d0*q2, 0.5d0*eps, 0.5d0*uv, 0.5d0*vw
+        0.5d0*q2*inv_ly, ni*eps*inv_ly, uv*inv_ly, vw*inv_ly
       write (unit_rt, '(13(ES23.15,1X))') time, mfx, mfz, S, s2_of(time), S*time, gamma_y_of(time), deltat, cfl*deltat, &
-        0.5d0*q2, 0.5d0*eps, 0.5d0*uv, 0.5d0*vw
-      write (unit_var, '(5(ES23.15,1X))') time, uu, ww, vv, uw
+        0.5d0*q2*inv_ly, ni*eps*inv_ly, uv*inv_ly, vw*inv_ly
+      write (unit_var, '(5(ES23.15,1X))') time, uu*inv_ly, vv*inv_ly, ww*inv_ly, uw*inv_ly
       flush (unit_rt); flush (unit_var)
       if (stokes_active()) then
-        ! region averages: q2 and grad u : grad u inside and outside |y - ly/2| < 8 delta (io.cpl)
+        ! region averages inside and outside |y - ly/2| < 8 delta (io.cpl):
+        ! energy_out/in = <u_i u_i>/2 and diss_out/in = nu <grad u : grad u>
         l_in = sum(dyl, mask=(inlayer == 1)); l_out = sum(dyl, mask=(inlayer == 0))
-        write (unit_sl, '(5(ES23.15,1X))') time, q_out/l_out, q_in/l_in, e_out/l_out, e_in/l_in
+        write (unit_sl, '(5(ES23.15,1X))') time, 0.5d0*q_out/l_out, 0.5d0*q_in/l_in, ni*e_out/l_out, ni*e_in/l_in
         flush (unit_sl)
       end if
     end if

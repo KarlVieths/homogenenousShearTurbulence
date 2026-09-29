@@ -37,15 +37,15 @@ def run(cfg, argv) -> int:
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 8))
     ax = axes[0, 0]
-    ax.plot(t, rt["energy"], label="E = <u_i u_i>/2 (ly/2 <..>)")
-    ax.plot(t, rt["diss"], label="diss = <∂_j u_i ∂_j u_i>/2")
+    ax.plot(t, rt["energy"], label="E = <u_i u_i>/2 (TKE k)")
+    ax.plot(t, rt["diss"], label="diss = ν <∂_j u_i ∂_j u_i>")
     if args.log:
         ax.set_yscale("log")
     ax.set_xlabel("time"); ax.set_ylabel("E, diss"); ax.legend(); ax.grid(True, alpha=0.3)
 
     ax = axes[0, 1]
-    ax.plot(t, rt["uw2"], label="u v/2")
-    ax.plot(t, rt["vw2"], label="w v/2")
+    ax.plot(t, rt["uv"], label="<u v>")
+    ax.plot(t, rt["vw"], label="<v w>")
     ax.set_xlabel("time"); ax.set_ylabel("stress"); ax.legend(); ax.grid(True, alpha=0.3)
 
     ax = axes[1, 0]
@@ -59,7 +59,7 @@ def run(cfg, argv) -> int:
         ax.plot(var["time"], var["uu"], label="uu")
         ax.plot(var["time"], var["vv"], label="vv")
         ax.plot(var["time"], var["ww"], label="ww")
-        ax.set_xlabel("time"); ax.set_ylabel("variances (ly <..>)")
+        ax.set_xlabel("time"); ax.set_ylabel("variances (<u_i u_j>)")
     else:
         ax.plot(t, rt["meanflowx"], label="meanflowx")
         ax.plot(t, rt["meanflowy"], label="meanflowy")

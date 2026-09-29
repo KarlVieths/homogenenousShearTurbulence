@@ -194,15 +194,23 @@ def read_pressure(path: str | Path, cfg=None, ref_field: Field | None = None,
 
 
 def read_runtimedata(path: str | Path):
-    """Read ``Runtimedata``: one line per ``dt_stat``, the 13 CPL columns.
+    """Read ``Runtimedata``: one line per ``dt_stat``, the 13 columns.
 
     Returns a structured numpy array with fields ``time, meanflowx,
-    meanflowy, S, S2, gamma_x, gamma_y, deltat, cfl_dt, energy, diss, uw2,
-    vw2``.
+    meanflowy, S, S2, gamma_x, gamma_y, deltat, cfl_dt, energy, diss, uv,
+    vw``.  Naming follows the solver's (streamwise, shearwise, spanwise) =
+    (u, v, w) convention.  All fluctuation quantities are y-averaged
+    (box-mean) values built by Parseval's theorem along the spectral
+    (streamwise, spanwise) directions:
+    ``energy = <u_i u_i>/2`` (the TKE ``k``), ``diss = nu <∂_j u_i ∂_j u_i>``
+    (kinematic viscosity ``nu = 1/re`` already folded in),
+    ``uv = <u v>`` and ``vw = <v w>`` (the Reynolds shear stresses).
+    ``meanflowx/meanflowy`` remain the box-height integrals of the mean
+    streamwise / spanwise profiles (as in CPL).
     """
     names = ("time", "meanflowx", "meanflowy", "S", "S2",
              "gamma_x", "gamma_y", "deltat", "cfl_dt",
-             "energy", "diss", "uw2", "vw2")
+             "energy", "diss", "uv", "vw")
     data = np.atleast_2d(np.loadtxt(Path(path), comments="#")).astype(float)
     if data.shape[1] == len(names):
         return data.view(dtype=[(n, float) for n in names]).reshape(-1)
@@ -210,8 +218,15 @@ def read_runtimedata(path: str | Path):
 
 
 def read_variances(path: str | Path):
-    """Read ``variances_runtime.dat``: ``time, uu, vv, ww, uv``."""
-    names = ("time", "uu", "vv", "ww", "uv")
+    """Read ``variances_runtime.dat``: ``time, uu, vv, ww, uw``.
+
+    The four velocity second moments are y-averaged (box-mean) values:
+    ``uu = <u u>``, ``vv = <v v>``, ``ww = <w w>`` (mean normal Reynolds
+    stresses) and ``uw = <u w>`` (the streamwise-spanwise Reynolds shear
+    stress; note this is ``<u w>``, not the ``<u v>`` logged in
+    ``Runtimedata``).
+    """
+    names = ("time", "uu", "vv", "ww", "uw")
     data = np.atleast_2d(np.loadtxt(Path(path), comments="#")).astype(float)
     if data.shape[1] == len(names):
         return data.view(dtype=[(n, float) for n in names]).reshape(-1)

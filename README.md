@@ -99,16 +99,28 @@ at start-up).
 
 All files are in the layout of the CPL code `hst-main`, so its
 post-processing chain (`postprocess/`, `pressure_reconstruction/`) reads
-them unchanged, and its fields can be used as restart files here.
+them unchanged, and its fields can be used as restart files here.  The
+statistics ASCII files use this solver's (streamwise, shearwise, spanwise)
+= (u, v, w) naming (`x` streamwise, `y` the shear direction carrying `v`,
+`z` spanwise).
 
-- `Runtimedata`: one line per `dt_stat` with the CPL columns
-  `time meanflowx meanflowy S S2 gamma_x gamma_y deltat cfl energy diss uw/2 vw/2`
-  (integrals over the box height: `energy = ly/2 <u_i u_i>`,
-  `diss = ly/2 <grad u : grad u>` without `nu`, computed here from the
-  compact derivatives; CPL naming, so `uw/2` is `ly/2 <u v>` in our axes).
-- `variances_runtime.dat`: `time uu vv ww uv` (CPL naming, `ly <..>`).
+- `Runtimedata`: one line per `dt_stat` with the columns
+  `time meanflowx meanflowy S S2 gamma_x gamma_y deltat cfl energy diss uv vw`.
+  All fluctuation quantities are y-averaged (box-mean) values, formed by
+  Parseval's theorem along the spectral (streamwise, spanwise) directions and
+  averaged over the shear direction `y`, so they are ready to use without
+  further rescaling: `energy = <u_i u_i>/2` (the TKE `k`),
+  `diss = nu <∂_j u_i ∂_j u_i>` with the kinematic viscosity `nu = 1/re`
+  folded in (computed here from the compact derivatives), and `uv = <u v>`,
+  `vw = <v w>` are the Reynolds shear stresses (no factor 1/2).
+  `meanflowx/meanflowy` remain the box-height integrals of the mean profiles.
+- `variances_runtime.dat`: `time uu vv ww uw`, y-averaged velocity second
+  moments with `v` the shearwise and `w` the spanwise fluctuation:
+  `uu = <u u>`, etc., and `uw = <u w>` (the streamwise–spanwise Reynolds
+  shear stress).
 - `stokes_runtime.dat` (with a Stokes layer): `time energy_out energy_in
-  diss_out diss_in`, region averages inside and outside the layer.
+  diss_out diss_in`, y-averaged region means inside and outside the layer
+  (`energy_out/in = <u_i u_i>/2`, `diss_out/in = nu <∂_j u_i ∂_j u_i>`).
 - `Dati.cart.out`: restart file, every `dt_save` and at the end.
 - `fields/field<n>.fld`: velocity snapshots every `dt_field`;
   `p_fields/pField<n>.fld`: the pressure at the same times.  The two

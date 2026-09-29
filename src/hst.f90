@@ -82,7 +82,7 @@ program hst
   call new_timestep()
   ifield = floor(time/dt_field)          ! CPL numbering: fields/field<ifield+1>.fld is the next one
   if (has_terminal) write (*, '(A)') '        time       deltat       cfl         energy           diss' // &
-    '           uw/2           vw/2      (CPL Runtimedata columns 10-13)'
+    '             uv             vw      (y-averaged; diss = nu <grad u : grad u>)'
   call outstats()
 
   !--------------------------------------------------------- time loop ----
