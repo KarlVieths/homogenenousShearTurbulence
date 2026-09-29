@@ -20,9 +20,9 @@ make clean
 
 ##############################
 # COMPILE AND TEST FOR GPU
-# (mul,ti-GPU nodes)
+# (multi-GPU nodes)
 ##############################
 source env/istm.sh           	# istmio2 / istmcetus / istmcorax
-make GPU=1 NCCL=1          	    # the same with NCCL for the alltoall (multi-GPU nodes)
+make GPU=1 NCCL=1          	# the same with NCCL for the alltoall (multi-GPU nodes)
 make test GPU=1 NCCL=1          # the test programs, same build directory; NCCL=1 keeps the test link of hst_mpi.o (-DHAVE_NCCL) consistent
 tests/run_tests.sh build-gpu 2  # second argument: ranks
