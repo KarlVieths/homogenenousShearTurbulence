@@ -126,12 +126,21 @@ contains
     shift_z = modulo(gamma_y_of(t)*ly, lz)
   end subroutine shear_shifts
 
-  ! Ghost rows of component c of V from its interior rows, at the current time.
-  subroutine fill_ghosts(c)
+  ! Ghost rows of component c of V from its interior rows, at the current
+  ! time; with c2, those of a second component in the same exchange (one
+  ! message per direction instead of two: an inter-node exchange has a
+  ! fixed cost before any bytes, FINDINGS.md).
+  subroutine fill_ghosts(c, c2)
+    use hst_mpi, only: exchange_ghost_rows     ! (in the subroutine, see fill_ghosts_field)
     integer(C_INT), intent(in) :: c
+    integer(C_INT), intent(in), optional :: c2
     real(C_DOUBLE) :: shift_x, shift_z
     call shear_shifts(time, shift_x, shift_z)
-    call fill_ghosts_field(V(:, :, :, c), shift_x, shift_z)
+    if (present(c2)) then
+      call exchange_ghost_rows(V(:, :, :, c), shift_x, shift_z, V(:, :, :, c2))
+    else
+      call exchange_ghost_rows(V(:, :, :, c), shift_x, shift_z)
+    end if
   end subroutine fill_ghosts
 
   ! Ghost rows of any field with the layout of a component of V, for the

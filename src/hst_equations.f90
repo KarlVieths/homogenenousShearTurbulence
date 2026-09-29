@@ -313,8 +313,7 @@ contains
         end do
       end do
     end do
-    call fill_ghosts(1)
-    call fill_ghosts(3)
+    call fill_ghosts(1, 3)      ! u and w in one exchange
   end subroutine linsolve
 
 end module hst_equations

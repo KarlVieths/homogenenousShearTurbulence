@@ -183,23 +183,31 @@ contains
   ! shift_x, shift_z of the upper image (hst_derivatives):
   !   f(ny) = f(0) ph,  f(ny+1) = f(1) ph,  f(-1) = f(ny-1) conjg(ph),  f(-2) = f(ny-2) conjg(ph).
   ! With one slab both neighbours are the rank itself and the exchange is
-  ! this wrap.
-  subroutine exchange_ghost_rows(field, shift_x, shift_z)
+  ! this wrap.  A second field, if given, gets the same treatment (on the
+  ! branch the two travel in one message per direction).
+  subroutine exchange_ghost_rows(field, shift_x, shift_z, field2)
     complex(C_DOUBLE_COMPLEX), intent(inout) :: field(ny0 - 2:, -nz:, nx0:)
     real(C_DOUBLE), intent(in) :: shift_x, shift_z
-    integer(C_INT) :: ix, iz
-    complex(C_DOUBLE_COMPLEX) :: ph
-    !$omp target teams distribute parallel do collapse(2) default(none) &
-    !$omp shared(field, nx0, nxN, nz, ny0, nyN, alfa0, beta0, shift_x, shift_z) private(ix, iz, ph)
-    do ix = nx0, nxN
-      do iz = -nz, nz
-        ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
-        field(nyN + 1, iz, ix) = field(ny0, iz, ix)*ph
-        field(nyN + 2, iz, ix) = field(ny0 + 1, iz, ix)*ph
-        field(ny0 - 1, iz, ix) = field(nyN, iz, ix)*conjg(ph)
-        field(ny0 - 2, iz, ix) = field(nyN - 1, iz, ix)*conjg(ph)
+    complex(C_DOUBLE_COMPLEX), intent(inout), optional :: field2(ny0 - 2:, -nz:, nx0:)
+    call wrap_rows(field)
+    if (present(field2)) call wrap_rows(field2)     ! (an absent optional must stay out of the target region)
+  contains
+    subroutine wrap_rows(f)
+      complex(C_DOUBLE_COMPLEX), intent(inout) :: f(ny0 - 2:, -nz:, nx0:)
+      integer(C_INT) :: ix, iz
+      complex(C_DOUBLE_COMPLEX) :: ph
+      !$omp target teams distribute parallel do collapse(2) default(none) &
+      !$omp shared(f, nx0, nxN, nz, ny0, nyN, alfa0, beta0, shift_x, shift_z) private(ix, iz, ph)
+      do ix = nx0, nxN
+        do iz = -nz, nz
+          ph = exp(dcmplx(0.0d0, -(alfa0*ix*shift_x + beta0*iz*shift_z)))
+          f(nyN + 1, iz, ix) = f(ny0, iz, ix)*ph
+          f(nyN + 2, iz, ix) = f(ny0 + 1, iz, ix)*ph
+          f(ny0 - 1, iz, ix) = f(nyN, iz, ix)*conjg(ph)
+          f(ny0 - 2, iz, ix) = f(nyN - 1, iz, ix)*conjg(ph)
+        end do
       end do
-    end do
+    end subroutine wrap_rows
   end subroutine exchange_ghost_rows
 
   ! transport = 'nccl' needs a build with NCCL=1 and one GPU per rank;
