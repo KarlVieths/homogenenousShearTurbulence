@@ -34,6 +34,12 @@ the code departed from this plan:
   run by `tests/run_tests.sh`, plus `tests/regression.sh` against stored
   fields; the layout of section 4 is the README's.
 - `&time` is `&time_control`; the namelist groups are otherwise as planned.
+- One change to a physics file was made for the parallel layer:
+  `fill_ghosts(c, c2)` fills the ghost rows of two components in one
+  exchange (`exchange_ghost_rows` takes an optional second field), used
+  for `u` and `w` at the end of `linsolve`, since on the branch an
+  inter-node exchange has a fixed cost before any bytes (FINDINGS.md,
+  "Lever (b)").  Session 10; the contract of 7 (i) is otherwise intact.
 
 Goal: take the Fortran `channel` DNS code (OpenMP-offload GPU solver for
 turbulent channel flow) and turn it into a solver for homogeneous shear
@@ -478,7 +484,8 @@ that reversing it is an addition, not a rewrite.
      on each side, and nothing further away.
   2. Ghost rows are filled only through `fill_ghosts` /
      `fill_ghosts_field` (`hst_derivatives`), which call the one routine
-     `exchange_ghost_rows(field, shift_x, shift_z)` of `hst_mpi`; on
+     `exchange_ghost_rows(field, shift_x, shift_z[, field2])` of
+     `hst_mpi` (a second field travels in the same messages); on
      `main` that routine is the shear-periodic wrap of the single slab.
   3. A box integral is a partial sum over the rank's rows followed by an
      `MPI_Allreduce` over `MPI_COMM_WORLD` in which a rank without a share
