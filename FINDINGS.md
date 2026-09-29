@@ -1415,7 +1415,8 @@ merged `main`, all green: CPU (istmio2, gfortran) `run_tests.sh` at 2,
 2, `regression.sh` at 2 x 2 and 2 (7e-14), the restart round trips 1 ->
 2 and 2 -> 1 (6e-14).  HoreKA `~/hst` is the merged `main`, rebuilt
 (`GPU_ARCH=cc80 NCCL=1`); `jobs/horeka_tests.slurm` with `NPY=2` on
-four A100 is job 5170308.  The branch `multinode-y` stays as a name for
+four A100 (job 5170308): all passed, the `small` deck at 2 x 2 against
+the login node's CPU run at 3e-14.  The branch `multinode-y` stays as a name for
 the same commits; its HoreKA copies (`~/hst-y`, `~/hst-exp`,
 `~/hst-exp2`) are now the code of `main` minus the docs.
 
