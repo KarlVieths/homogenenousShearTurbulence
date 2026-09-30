@@ -1571,3 +1571,32 @@ Measured on the way: 0.0075-0.0087 s/step for the 64 x 128 x 64 deck on
 four A100 (`npy = 1`), and 1-2.3 s for each 51 MB velocity + 17 MB
 pressure snapshot with its restart file, i.e. the collective MPI-IO of
 these files costs a second of latency whatever the size.
+
+**The small production run, second attempt (job 5171459, `prod-small-b`,
+the deck with the energetic start).**  Turbulent from the start: 24523
+steps to S t = 100 at 0.00719 s/step on four A100 (176 s; the step
+settles at 0.0034-0.0039), which is less than the 300 s segment, so the
+chain was not exercised by it (a third submission with `MARGIN=800`, i.e.
+100 s segments, `prod-small-c`, does that).  Averages of `Runtimedata`
+over S t = 30..100 (7001 samples) against the long sheared run of WP5:
+
+| quantity | this run | WP5 (57324 steps, cflmax 0.8, RTX 3060) |
+| --- | --- | --- |
+| q2 | 0.132 | 0.104 |
+| S* = S q2/eps | 6.09 | 6.3 |
+| -uv/q2 | 0.166 | 0.159 |
+| production / dissipation | 1.010 | 1.006 |
+| Re_lambda | 37 | 33 |
+| eta from eps = 0.0216 | 0.0147 (dx/eta = 1.06) | 0.0157 |
+
+The CPL chain on HoreKA (`jobs/cpl_postprocess.sh ~/hst-runs/prod-small-b
+2 4 10 1`, fields 4-10) needs `module load compiler/gnu/13` and then, as
+a second command, `module load mpi/openmpi/5.0` (Lmod's hierarchy: in
+one command the Intel-built OpenMPI stays loaded and gcc chokes on
+`-xCORE-AVX2`), `~/.local/bin` on the PATH for `cpl`, and the `-L` paths
+of `mpicc -show` in `LOADLIBES` (the script does that now: `mpicpl`
+links with `-lmpi` alone).  `hst-main` is now on HoreKA too
+(`~/hst-main`, an rsync copy).  Its `rms.dat` over the seven snapshots
+gives q2 = 0.148 (the seven-sample average of a quantity whose
+10000-sample average is 0.140) and the anisotropy b_uu = +0.13, b_vv =
+-0.05, b_ww = -0.08 (our names; CPL's `vv` is our spanwise `ww`).
