@@ -2,7 +2,7 @@
 
 Usage::
 
-    python3 -m post slices [deck] field1.fld [-z iz | -y j] [-c u|v|w|p] \\
+    python3 -m post.python slices [deck] field1.fld [-z iz | -y j] [-c u|v|w|p] \\
         [-o out.png | --npz]
 
 Reads a velocity field (or pressure) and produces a slice:

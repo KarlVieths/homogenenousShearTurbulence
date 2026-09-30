@@ -2,7 +2,7 @@
 
 Usage::
 
-    python3 -m post plot_stats [deck] [-o out.png]
+    python3 -m post.python plot_stats [deck] [-o out.png]
 
 Reads ``Runtimedata`` next to the deck and plots energy, dissipation and the
 Reynolds stresses against time.  Requires ``matplotlib`` (imported lazily).

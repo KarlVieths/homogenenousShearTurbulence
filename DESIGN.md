@@ -130,7 +130,7 @@ What is deleted outright: `y_schur_solver.f90` (958), `y_line_solvers.fypp`
 and wall closures), `wall_closure.fypph`, `channel_boundaries.fypph`,
 `channel_bcs.f90`, `byte_workspace.fypp`, `env_options.f90`, `roctx.f90`,
 `config.f90` (replaced by a namelist), all scalars (`nPhi`), flow-rate /
-pressure-gradient correction, `post/`, `tests/*.py`, `postpro/`, cuSPARSE.
+pressure-gradient correction, `post/python/`, `tests/*.py`, `postpro/`, cuSPARSE.
 Section 7 records why each of the four larger deletions (y-decomposition,
 NCCL, autotuner, cuSPARSE) was made and what it takes to bring it back.
 

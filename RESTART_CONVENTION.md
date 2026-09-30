@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-28
 **Files examined:** `run/Dati.cart.in.Re2000`, `src/hst_io.f90` (Fortran restart
-reader), `post/io.py` (Python reader), `run/hst.in` (deck).
+reader), `post/python/io.py` (Python reader), `run/hst.in` (deck).
 
 ## 1. The two conventions
 
@@ -52,7 +52,7 @@ maps to the new `z` axis and file dim2 (shear) to the new `y` axis.
   `v` slot.  `cpl_view` maps file row `r` → slot `r+2` and file dim1 (spanwise)
   onto the new `iz` index, file dim2 (shear rows) onto the new `iy` index.
 
-**Python** — `post/io.py::read_field`:
+**Python** — `post/python/io.py::read_field`:
 - `a = raw.reshape((nx+1, 2*ny_cpl+1, nz_cpl+3, 3))`, transposes to
   `(row, span, ix, comp)`, keeps interior rows `2:2+ny_hst`.
 - `vel = (u, v, w)` with `v = CPL comp2 (w_cpl, shear)`, `w = CPL comp1
@@ -91,7 +91,7 @@ PASSED: convention conversion verified (no change to restart bytes)
 
 `Dati.cart.in.Re2000` is already stored in the convention-neutral CPL layout
 and the shipped readers (`src/hst_io.f90::restart_read` and
-`post/io.py::read_field`) already map its axes and swap its velocity
+`post/python/io.py::read_field`) already map its axes and swap its velocity
 components into the new hst convention correctly.  **No rewrite of the restart
 file is required** — changing the file's bytes would make the reader double-apply
 the swap and corrupt the field.
