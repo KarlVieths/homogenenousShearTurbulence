@@ -51,12 +51,12 @@ Copy the block at the end as the opening message of the next session.
    0.01, appended), then `jobs/cpl_postprocess.sh ~/hst-runs/prod-small-b 4`
    (on HoreKA: `module load compiler/gnu/13 mpi/openmpi/5.0` for
    `mpicc`, `cpl` is in `~/.local/bin`; or rsync the run directory to
-   istmio2, 700 MB) and the averages of `Runtimedata` over S t = 30..100:
-   S* = S energy/diss*re... i.e. with the columns (`time meanflowx
-   meanflowy S S2 gamma_x gamma_y deltat cfl energy diss uw/2 vw/2`,
-   integrals over ly = 2) q2 = energy, eps = diss/re, S* = S q2/eps,
-   -uv/q2 = -(uw/2)/energy, P/eps = -S (uw/2)*2/... check the factors
-   against FINDINGS.md "Long sheared run" before quoting.
+   istmio2, 700 MB) and the averages of `Runtimedata` over S t = 30..100.
+   Its columns are `time meanflowx meanflowy S S2 gamma_x gamma_y deltat
+   cfl energy diss uw/2 vw/2`, integrals over ly = 2, so `energy` = <q2>,
+   `diss` = <grad u : grad u> (without nu), `uw/2` = <u v>: eps =
+   diss/re, S* = S energy re/diss, -uv/q2 = -(uw/2)/energy, P/eps = -S
+   (uw/2) re/diss; compare with FINDINGS.md "Long sheared run".
 2. **Read the production run's first segment**: s/step (the deck's cost
    was estimated, not measured: a third of the 1024^3 points), the
    snapshot and restart-file times at 8.6 + 2.9 GB, the memory (no `mem`
