@@ -1553,3 +1553,21 @@ amplitude 0.003 at kpeak 8, i.e. q2 = 0.12 from the start (amplitude
 64^3 run agree to all digits: the amplitude scales the potential, not the
 rms), instead of the 1e-3 at kpeak 4 of the default deck (q2 = 4e-4,
 S t = 30 of growth).
+
+**The small production run (job 5171453, one A100 node, `dev_accelerated`,
+`--time=00:15:00` so that `wall_max` = 300 s).**  The job script did its
+part (the limit parsed, `wall_max` set, the run written to
+`~/hst-runs/prod-small`), but the default deck as it stood went nowhere:
+with `amplitude = 1e-3` at `kpeak = 4` the initial field has q2 = 3e-4
+and decays (energy 2.9e-4 at t = 0, 1.2e-5 at t = 100) without ever
+becoming turbulent, so the CFL step stays at 0.13 and S t = 100 takes
+826 steps and 28 s.  The long sheared run of WP5 needed 57324 steps with
+the "default deck": the initial-field module (the keyed random vector
+potential) came later and its `amplitude` is not an rms, so the deck
+that transitioned then does not now.  `hst.in` now starts from
+`amplitude = 0.003` at `kpeak = 8` (q2 = 0.12; the same start went
+turbulent in the local check above, dt = 0.005 at Re = 1000 on 64^3).
+Measured on the way: 0.0075-0.0087 s/step for the 64 x 128 x 64 deck on
+four A100 (`npy = 1`), and 1-2.3 s for each 51 MB velocity + 17 MB
+pressure snapshot with its restart file, i.e. the collective MPI-IO of
+these files costs a second of latency whatever the size.
