@@ -1398,6 +1398,51 @@ with the H100 build into `~/hst-runs/scal-h2`.  Whether the 94 GB H100
 holds 1024^3 on one node (estimated 75 GB per GPU) is part of what it
 would measure.
 
+**Four nodes (job 5170168, `accelerated`, hkn0701/0706/0707/0711, 7.8 min
+in 15, `npy = 0` = 4 x-z pencils x 4 y slabs):**
+
+| A100 40 GB, NCCL, s/step | 8 GPU (2 nodes) | 16 GPU (4 nodes) | ratio |
+| --- | --- | --- | --- |
+| bench_256 | 0.02257 (job 5170167) | 0.02221 | 1.02x |
+| bench_512 | 0.12108 | 0.09534 | 1.27x |
+| its FFT phases (to physical + products) | 91.0 ms | 47.2 ms | 1.93x |
+| its "implicit solves" phase | 12.0 ms | 26.4 ms | |
+| its ghost rows / exposed records (transfers only) | 8.2 / 3.9 ms | 10.2 / 30.3 ms | |
+| bench_1024 | 1.00659 | 0.63023 | 1.60x |
+| its FFT phases | 842 ms | 425 ms | 1.98x |
+| its "implicit solves" phase | 59.7 ms | 107.3 ms | |
+| its "ghosts, dv/dy, u and w" phase | 49.1 ms | 70.5 ms | |
+| its ghost rows / exposed records (transfers only) | 20.2 / 4.6 ms | 23.9 / 114.2 ms | |
+| bench_1024, peak memory per GPU | 39.3 GB | 20.8 GB | |
+
+**The compute halves, the reduced systems do not.**  From two to four
+nodes the FFT phases (transforms, node-local alltoalls, products) scale
+perfectly, 1.93x and 1.98x, and the ghost rows cost about what they did
+(the bytes per rank are the same, one more hop is not).  What breaks is
+the gather of the reduced systems: the line solver's "exposed records"
+go from 4.6 to 114 ms at 1024^3 (from 3.9 to 30 ms at 512^3), and the
+"implicit solves" phase, whose compute should have halved, nearly
+doubles.  Each slab gathers the records of all `npy` slabs over the y
+column (`allgather_y`), so the bytes per rank double from `npy = 2` to 4
+while the sweep they hide behind halves with `nyB`, and at four slabs
+the gather crosses three node links per rank instead of one.  Without
+the exposed records the 16-GPU steps would be 65 ms (1.86x) and 516 ms
+(1.95x): the reduced-system gather is the whole loss.  At 256^3 the
+step is flat (22.2 vs 22.6 ms): the exposed records (9.8 ms) and ghost
+rows (4.8 ms) are two thirds of it.
+
+So the picture for production: two nodes are the sweet spot per GPU
+(1024^3 at 1.0 s/step, the exchange at 2.5%); four nodes buy 1.6x for
+2x the GPUs at 1024^3, and the lever that would make them pay is not
+the ghost rows any more but the records: (d) halving the bytes for the
+system kinds whose matrix does not change (rated <= 3% at two nodes, it
+is worth up to 18% of the four-node 1024^3 step), or making the gathered
+bytes independent of `npy` (each rank solving the reduced systems of a
+share of the lines after an alltoall of the records within the y
+column, instead of every rank gathering all records and solving all
+lines redundantly).  The regression decks of the job (8 ranks, `npy =
+1`) agree with the references at 7e-14 as before.
+
 ## The merge of `multinode-y` into `main` (2026-09-29, session 11)
 
 With the scaling numbers in (the y exchange is 2.5% of the 1024^3 step)

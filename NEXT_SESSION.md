@@ -24,13 +24,12 @@ Copy the block at the end as the opening message of the next session.
   reference on the A100).  At 1024^3 the y exchange is 2.5% of the step
   (10.8% at 512^3), so the remaining exchange levers (interior/boundary
   row splitting, lever (d)) are worth at most that at production size.
-  Four nodes: job 5170168 (`accelerated`, `--nodes=4`, 512^3 and
-  1024^3 on 16 GPUs with the same-job 8-GPU rows, `RUNS=~/hst-runs/
-  scal-a4`) was still pending at the end of the session; when it has
-  run, `~/hst-y/hst-2node-5170168.out` holds the rows: add them to
-  FINDINGS.md "Scaling" and a "4 x 4 A100" column to the README table.
-  Expected: well below 2x two nodes at 512^3 (the exchange stays, the
-  compute halves), closer to 2x at 1024^3.
+  Four nodes (job 5170168, after 16 h in the `accelerated` queue):
+  256^3 0.02221 (flat), 512^3 0.09534 (1.27x two nodes), 1024^3 0.630
+  s/step (1.60x, 20.8 GB per GPU).  The transforms halve exactly; the
+  loss is the gather of the reduced systems over four slabs (exposed
+  records 114 of 630 ms at 1024^3, 30 of 95 ms at 512^3), i.e. bytes
+  that grow with `npy` behind a sweep that shrinks with it.
 - **H100 not measured**: the whole `accelerated-h100` partition is in
   the reservation `hk2teal` until 2026-10-31.  `~/hst-y/build-h100` is
   built (`GPU_ARCH=cc90`) and job 5170169 (two H100 nodes, the two-node
@@ -60,13 +59,26 @@ again (the `dev_accelerated` one started after 28 min).
    CFL of the deck.  Recommended: it is what the code is for, and the
    first run will find what the benchmarks do not (restart cadence,
    field I/O time at 1024^3, the statistics).
-2. **Cleanup after the merge**: remove the stale HoreKA copies, fold `tests/crossbranch.sh` into the safety net
+2. **The reduced-system gather for `npy > 2`** (FINDINGS.md "Scaling",
+   four nodes): worth up to 18% of the four-node 1024^3 step and 32% at
+   512^3, nothing at two nodes.  Two routes, both in `hst_linsolve` and
+   `hst_mpi` only: lever (d), half the record bytes for the system kinds
+   whose matrix does not change between calls (`KIND_DY`, `KIND_D0INV`,
+   the Poisson kind per mode); or an alltoall of the records within the
+   y column so that each rank solves the reduced systems of `1/npy` of
+   the lines and scatters the solutions back (bytes per rank independent
+   of `npy`, no redundant solves).  Read the record layout in
+   `hst_linsolve` (`record(NREC, line, slab)`, `allgather_y_start`)
+   before choosing; measure in one four-node job with `ROOTS="a b"`
+   (`--nodes=4`, 16 h queue: submit early, `--time=00:15:00`).
+3. **Cleanup after the merge**: remove the stale HoreKA copies, fold `tests/crossbranch.sh` into the safety net
    as the `npy` restart test (README "Tests"), retire the "branch"
    wording that is left in FINDINGS.md's older sections (they are
    history, so probably leave them).
-3. **Hiding the ghost rows' fixed cost** (interior/boundary row
+4. **Hiding the ghost rows' fixed cost** (interior/boundary row
    splitting in the y-stencil kernels): at most 10% at 512^3 on two
-   nodes, 2.5% at 1024^3.  Not recommended.
+   nodes, 2.5% at 1024^3, and the ghost rows do not grow with the node
+   count (four nodes: 24 ms of 630).  Not recommended.
 
 ## Safety net (one branch now; the third argument is npy)
 
@@ -105,7 +117,8 @@ Repository ~/Codes/hst/homogenenousShearTurbulence (one branch, main,
 tags xz-parallel / xyz-parallel; on HoreKA ~/hst = main), a GPU/CPU DNS for homogeneous shear turbulence with x-z pencils
 times npy y slabs; read README.md, then NEXT_SESSION.md, then
 FINDINGS.md from "Scaling" to the end.  Task: item 1 of NEXT_SESSION.md
-unless I say otherwise.  Safety net green after any code change (CPU,
+(a production run) unless I say otherwise; item 2 (the reduced-system
+gather at npy = 4) if I want four nodes to pay.  Safety net green after any code change (CPU,
 GPU, NCCL on istmcetus, the npy restart round trip).  Do not modify
 ~/Codes/hst/channel or ~/Codes/hst/hst-main.  Commit each step; push at
 the end.  First thing: `! ssh horeka true` in the prompt if `ssh -O
