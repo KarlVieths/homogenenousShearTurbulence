@@ -79,3 +79,6 @@ postprocess
 
 # run directory
 run/
+
+# additional test directories
+test_*/
