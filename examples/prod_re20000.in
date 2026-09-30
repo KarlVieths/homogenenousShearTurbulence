@@ -1,0 +1,16 @@
+! Production deck: the Sekimoto, Dong & Jimenez box 3:2:1 at Re = 1/nu = 20000
+! (S = 1, ly = 2: Re_z = S ly^2/nu = 80000), dealiased grid 1536 x 1024 x 512
+! (nx = 511, ny = 1024, nz = 170): dx = dy = dz = ly/ny = 0.00195, i.e. nx = 3 nz
+! as FINDINGS.md "Long sheared run" recommends for this box.  Resolution from
+! that run (eta = 0.0157 at Re = 1000, eta ~ nu^(3/4) at the dissipation the box
+! sets): eta = 0.0017, dx/eta = 1.2, kmax eta = 1.8, Re_lambda about 150.
+! One third of the points of bench_1024: two A100 nodes (8 ranks, npy = 2) or one
+! (4 ranks).  The initial field has q2 = 0.1 (amplitude 0.05 gives 32 at kpeak = 8,
+! whatever the grid), about the stationary value.  Snapshots every 5 time units
+! (velocity 8.6 GB, pressure 2.9 GB).  jobs/horeka_prod.slurm runs it in
+! segments: it sets wall_max from the job's time limit and resubmits itself from
+! Dati.cart.out until t_max.
+&mesh  nx = 511, ny = 1024, nz = 170, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0, npy = 0 /
+&physics  re = 20000.0, S = 1.0 /
+&time_control  deltat = 0.0, cflmax = 1.0, t_max = 100.0, nstep = 100000000, wall_max = 0.0, dt_stat = 0.01, dt_field = 5.0, dt_save = 5.0, time = 0.0, time_from_restart = .true. /
+&init  amplitude = 0.003, seed = 1, kpeak = 8.0 /

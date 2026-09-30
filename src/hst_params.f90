@@ -45,6 +45,7 @@ module hst_params
   !------------------------------------------------------- clock and I/O ----
   real(C_DOUBLE), save :: deltat, dt_fixed, cflmax, cfl = 0.0d0   ! dt_fixed: deck value, 0 = from cflmax
   real(C_DOUBLE), save :: t_max, dt_stat, dt_field, dt_save
+  real(C_DOUBLE), save :: wall_max                  ! wall-clock limit of the run in seconds (0 = none)
   real(C_DOUBLE), save :: time, time0 = 0.0d0
   integer(C_SIZE_T), save :: nstep, istep = 0, ifield = 0
   logical, save :: time_from_restart

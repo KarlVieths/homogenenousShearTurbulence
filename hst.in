@@ -36,6 +36,7 @@
   cflmax = 1.0
   t_max = 100.0
   nstep = 1000000
+  wall_max = 0.0                ! stop after this many seconds of wall-clock time and write the restart file (0 = never)
   dt_stat = 0.01                ! Runtimedata interval
   dt_field = 10.0               ! Dati.cart.<i>.out snapshot interval
   dt_save = 10.0                ! Dati.cart.out restart interval

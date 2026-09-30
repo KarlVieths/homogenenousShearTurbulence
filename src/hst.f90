@@ -9,7 +9,10 @@
 ! Usage:  mpirun -np N ./hst [hst.in]
 !
 ! Set-up, then per step: timestep() (hst_equations), statistics, snapshots,
-! restart file, new time step from the CFL number.
+! restart file, new time step from the CFL number.  The run ends at t_max,
+! after nstep steps or after wall_max seconds of wall-clock time (a SLURM
+! segment: the restart file is written and the next job continues), whichever
+! comes first.
 !
 program hst
 
@@ -38,7 +41,8 @@ program hst
   character(len=256) :: deck
   character(len=40) :: fname
   integer :: ierr, m
-  real(C_DOUBLE) :: cfl_global, t0, t1, elapsed
+  real(C_DOUBLE) :: cfl_global, t0, t1, elapsed, t_io
+  logical :: wall_reached = .false.
 
   call MPI_Init(ierr)
   call MPI_Comm_rank(MPI_COMM_WORLD, iproc, ierr)
@@ -81,7 +85,7 @@ program hst
 
   !--------------------------------------------------------- time loop ----
   elapsed = 0.0d0
-  do while (time < t_max - 0.5d0*deltat .and. istep < nstep)
+  do while (time < t_max - 0.5d0*deltat .and. istep < nstep .and. .not. wall_reached)
     t0 = MPI_Wtime()
     istep = istep + 1
     call timestep()
@@ -92,21 +96,26 @@ program hst
       ifield = ifield + 1
       write (fname, '(A,I0,A)') 'fields/field', ifield, '.fld'
       if (has_terminal) print '(A,F12.5)', '   writing '//trim(fname)//' at time', time
+      t_io = MPI_Wtime()
       !$omp target update from(V)
       call restart_write(trim(fname))
       write (fname, '(A,I0,A)') 'p_fields/pField', ifield, '.fld'
       call write_pressure(trim(fname))
+      if (has_terminal) print '(A,F8.1,A)', '   velocity and pressure snapshots written in', MPI_Wtime() - t_io, ' s'
     end if
     if (crossed(dt_save)) then
       if (has_terminal) print '(A,F12.5)', '   writing Dati.cart.out at time', time
+      t_io = MPI_Wtime()
       !$omp target update from(V)
       call restart_write('Dati.cart.out')
+      if (has_terminal) print '(A,F8.1,A)', '   restart file written in', MPI_Wtime() - t_io, ' s'
     end if
     call new_timestep()
     call toc(T_OTHER)
 
     t1 = MPI_Wtime()
     elapsed = elapsed + (t1 - t0)
+    call check_wall_clock()
     if (has_terminal .and. (mod(istep, 50_C_SIZE_T) == 0 .or. istep <= 5)) &
       write (*, '(A,I0,A,F9.5,A,F12.2,A)') '   step ', istep, ': ', t1 - t0, ' s/step, ', elapsed, ' s elapsed'
   end do
@@ -114,9 +123,12 @@ program hst
   !------------------------------------------------------------ finish ----
   if (has_terminal) print '(A,F12.5,A,I0,A,F10.2,A,F9.5,A)', '   end of run at time', time, ' after ', istep, &
     ' steps; ', elapsed, ' s, ', elapsed/max(istep, 1_C_SIZE_T), ' s/step; writing Dati.cart.out'
+  if (has_terminal .and. wall_reached) print '(A,F10.0,A)', '   (wall-clock limit wall_max =', wall_max, ' s reached)'
   call timer_report(istep)
+  t_io = MPI_Wtime()
   !$omp target update from(V)
   call restart_write('Dati.cart.out')
+  if (has_terminal) print '(A,F8.1,A)', '   restart file written in', MPI_Wtime() - t_io, ' s'
   call close_runtimedata()
   call free_linsolve()
   call free_fft()
@@ -143,5 +155,13 @@ contains
     if (dt_fixed > 0.0d0) deltat = min(deltat, dt_fixed)
     if (dt_fixed > 0.0d0 .and. cflmax <= 0.0d0) deltat = dt_fixed
   end subroutine new_timestep
+
+  ! Sets wall_reached on every rank when the terminal rank has spent wall_max
+  ! seconds in the time loop (the ranks' clocks differ, so one rank decides).
+  subroutine check_wall_clock()
+    if (wall_max <= 0.0d0) return
+    if (has_terminal) wall_reached = elapsed > wall_max
+    call MPI_Bcast(wall_reached, 1, MPI_LOGICAL, 0, MPI_COMM_WORLD, ierr)
+  end subroutine check_wall_clock
 
 end program hst
