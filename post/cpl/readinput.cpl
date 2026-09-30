@@ -14,18 +14,19 @@
 ! Axis relabel: hst.in's &mesh uses the NEW-code convention where
 !   ny = physical shear points, nz = spanwise Fourier modes.
 ! The post-processor uses the CPL/field-header convention
-!   ny_cpl = spanwise modes (= nz_new),   nz_cpl = ny_new + 1.
-! Array extents cannot be relabelled at runtime (CPL rejects assignment to an
-! INTEGER CONSTANT), so nx/ny/nz are declared as compile-time CONSTANTs in the
-! CPL convention below -- set them once per case from &mesh (see comment).
-! They must match the ny=/nz= values written in each fieldN.fld header.
+!   ny_cpl = spanwise modes (= nz_new),   nz_cpl = ny_new + 1
+!   (nx unchanged).
+!
+! nx/ny/nz are declared as plain INTEGERs (NO CONSTANT) and are READ from
+! readinput.in FIRST, so they follow hst.in at runtime.  convert_hstin.py
+! emits them already converted to the CPL convention above, ahead of every
+! other token, so these globals are set before any field array is built.
+! CPL's compiler automatically heap-allocates ARRAY declarations whose bounds
+! are not compile-time constants, sizing them from these runtime values.
 
-! ---- Array extents: COMPILE-TIME CPL-convention constants -----------------
-! hst.in &mesh:  nx=65  ny=86  nz=22   (new-code: ny = shear, nz = spanwise)
-!   ->  nx = 65
-!       ny = spanwise modes       = nz_new      = 22
-!       nz = physical points + 1  = ny_new + 1  = 87
-INTEGER CONSTANT nx=65, ny=22, nz=87
+! ---- Array extents: RUNTIME CPL-convention integers (read first) ---------
+! nx, ny, nz come from the &mesh port of convert_hstin.py (see above).
+INTEGER nx, ny, nz
 
 ! ---- Runtime scalars (kept as non-CONSTANT globals so the renamed new-deck
 !      tokens can be mapped onto the legacy names the downstream modules use) --
@@ -47,10 +48,12 @@ REAL   s2_period          ! &physics s2_period    -> T
 REAL   s2_start           ! &physics s2_start     -> t0_SL
 STRING restart_file       ! &time_control restart_file -> Vfield
 
-! Read from input file (deck order: &mesh, &physics, &time_control)
+! Read from input file.  nx/ny/nz MUST be read first: convert_hstin.py emits
+! them as the first three tokens, already in the CPL convention, so they are
+! assigned to the runtime globals before any field array is built.
 FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE "readinput.in"]
-  ! &mesh ...: alfa0, beta0, ystretch (nx/ny/nz are compile-time above)
-  READ BY NAME FROM data alfa0, beta0, ystretch
+  ! &mesh port ...: nx, ny, nz (CLP convention), then alfa0, beta0, ystretch
+  READ BY NAME FROM data nx, ny, nz, alfa0, beta0, ystretch
   ! &physics ...: re, S, s2_amplitude, s2_period, s2_start, ...
   READ BY NAME FROM data re, S, s2_amplitude, s2_period, s2_start
   ! &time_control ...: deltat, cflmax, t_max, dt_stat, dt_field, dt_save,
