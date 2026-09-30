@@ -31,8 +31,8 @@ Copy the block at the end as the opening message of the next session.
      on the HoreKA login node.  The first attempt (job 5171453)
      relaminarized from the old weak initial field.  `prod-small-c` (job
      5171488 and successors, `MARGIN=800` so that the segments are 100 s)
-     is the same run as a chain of two or three segments: the test of the
-     restart chain (see the session's last message for its outcome).
+     was the same run as a chain of two segments: the restart chain
+     works end to end (FINDINGS.md), S* = 6.17, -uv/q2 = 0.165.
   2. `/hkfs/work/workspace/scratch/xt8786-hst/re20000`: the production
      deck `examples/prod_re20000.in` (1536 x 1024 x 512, Re = 20000, dx =
      dy = dz, dx/eta = 1.2 estimated, Re_lambda about 150) to S t = 100 on
@@ -45,15 +45,14 @@ Copy the block at the end as the opening message of the next session.
 
 ## The task: read the production run
 
-1. **Check the small chain** (`prod-small-c`): the log of every segment
-   ("restarting from Dati.cart.out", "wall-clock limit reached", "segment
-   n submitted"), `Runtimedata` continuous across segments (one line per
-   0.01, appended), then `jobs/cpl_postprocess.sh ~/hst-runs/prod-small-b 4`
-   (on HoreKA: `module load compiler/gnu/13`, then separately `module
-   load mpi/openmpi/5.0`, `~/.local/bin` on the PATH for `cpl`,
-   `HST_MAIN=~/hst-main`; FINDINGS.md) and the averages of `Runtimedata`
-   over S t = 30..100 (done for `prod-small-b`; repeat for the chain, the
-   two must agree).
+1. **The small runs are done** (`prod-small-b`, `prod-small-c`): chain,
+   statistics and CPL post-processing all checked (FINDINGS.md).  The
+   post-processing recipe on HoreKA: `module load compiler/gnu/13`, then
+   separately `module load mpi/openmpi/5.0`, `~/.local/bin` on the PATH
+   for `cpl`, `HST_MAIN=~/hst-main jobs/cpl_postprocess.sh <run dir>
+   <ranks> [nfmin nfmax dn]`.  Left open: the restart repeats one
+   `Runtimedata` line (cosmetic), and the statistics reduction on the
+   device is not bit-reproducible between runs (the fields are).
    Its columns are `time meanflowx meanflowy S S2 gamma_x gamma_y deltat
    cfl energy diss uw/2 vw/2`, integrals over ly = 2, so `energy` = <q2>,
    `diss` = <grad u : grad u> (without nu), `uw/2` = <u v>: eps =
@@ -125,8 +124,8 @@ Repository ~/Codes/hst/homogenenousShearTurbulence (one branch, main; on
 HoreKA ~/hst = main), a GPU/CPU DNS for homogeneous shear turbulence with
 x-z pencils times npy y slabs; read README.md, then NEXT_SESSION.md, then
 FINDINGS.md from "Production run" to the end.  Task: NEXT_SESSION.md items
-1-3 (the small restart chain, the production run's numbers, its
-post-processing with the CPL chain) unless I say otherwise.  Safety net
+2-3 (the production run's numbers, its post-processing with the CPL
+chain) unless I say otherwise.  Safety net
 green after any code change (CPU, GPU, NCCL on istmcetus, the npy restart
 round trip).  Do not modify ~/Codes/hst/channel or ~/Codes/hst/hst-main.
 Commit each step; push at the end.  First thing: `! ssh horeka true` in

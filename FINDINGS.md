@@ -1600,3 +1600,22 @@ links with `-lmpi` alone).  `hst-main` is now on HoreKA too
 gives q2 = 0.148 (the seven-sample average of a quantity whose
 10000-sample average is 0.140) and the anisotropy b_uu = +0.13, b_vv =
 -0.05, b_ww = -0.08 (our names; CPL's `vv` is our spanwise `ww`).
+
+**The restart chain (jobs 5171488 and 5171583, `prod-small-c`,
+`MARGIN=800`: 100 s segments).**  Segment 1 stopped at S t = 62.4 after
+13507 steps ("wall-clock limit wall_max = 100 s reached"), wrote
+`Dati.cart.out` and submitted segment 2, which waited 48 min in the
+`dev_accelerated` queue, restarted from the file ("restarting from
+Dati.cart.out") and ran to S t = 100 in 10199 steps: "the run reached
+t_max: done", no third submission.  `Runtimedata` is continuous across
+the two segments except that the restart repeats the line of its start
+time (the initial `outstats` of every run; 10002 lines instead of
+10001), harmless for averages and a visible marker of the restart.  The
+chained run's averages over S t = 30..100 (S* = 6.17, -uv/q2 = 0.165,
+P/eps = 1.018) agree with the unbroken run's (6.09, 0.166, 1.010) to the
+sampling error: the two runs are different realizations, since the
+statistics lines differ already at t = 0 in the last digits of `uw/2`
+(the device reduction of the statistics is not bit-reproducible; the
+fields of the regression are).  The CPL `rms.dat` of `prod-small-b`
+over its seven snapshots gives -uv/q2 = 0.171 (its `uw` column is our
+u v).
