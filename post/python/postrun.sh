@@ -2,11 +2,11 @@
 # =============================================================================
 # postrun.sh  --  configurable launcher for the `hst` postprocessing pipeline.
 #
-# Convenience wrapper around `python3 -m post <tool> ...` (see post/).
+# Convenience wrapper around `python3 -m post.python <tool> ...` (see post/python/).
 #
 # Usage:
-#     ./post/postrun.sh [OPTIONS] <command> [command args...]
-#     (or:  post/postrun.sh ...   from the repo root)
+#     ./post/python/postrun.sh [OPTIONS] <command> [command args...]
+#     (or:  post/python/postrun.sh ...   from the repo root)
 #
 # Commands:
 #     stats              plot run statistics (Runtimedata + variances)
@@ -36,11 +36,12 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # CONFIG  -- edit these as needed
 # -----------------------------------------------------------------------------
-# Directory this script lives in.  Since postrun.sh sits inside the `post`
-# package directory, POST_ROOT is the package dir; REPO_ROOT (its parent) is
-# the repo root that must be on PYTHONPATH for `python3 -m post` to resolve.
+# Directory this script lives in.  Since postrun.sh sits inside the `post/python`
+# package directory, POST_ROOT is the package dir; REPO_ROOT (its parent's
+# parent) is the repo root that must be on PYTHONPATH for `python3 -m post.python`
+# to resolve `post.python`.
 POST_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$POST_ROOT/.." && pwd)"
+REPO_ROOT="$(cd "$POST_ROOT/../.." && pwd)"
 
 # Run directory / name of a deck.  Leave RUN_DIR empty ("") to run from the
 # current directory (auto-discover).  DECK overrides RUN_DIR when non-empty.
@@ -90,7 +91,7 @@ shift $((OPTIND - 1))
 command="$1"
 shift
 
-# --- PYTHONPATH so `python3 -m post` is importable --------------------------
+# --- PYTHONPATH so `python3 -m post.python` is importable -------------------
 export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 # --- resolve the deck argument passed to the pipeline ------------------------
@@ -127,7 +128,7 @@ cmd_stats() {
     echo "$SEP"
     echo "==> plot_stats"
     # shellcheck disable=SC2086
-    "$PYTHON_BIN" -m post plot_stats $deck_arg -o "$out" "$@"
+    "$PYTHON_BIN" -m post.python plot_stats $deck_arg -o "$out" "$@"
     echo "    wrote: $out"
 }
 
@@ -168,7 +169,7 @@ cmd_slice() {
     echo "$SEP"
     echo "==> slice  field=$field  comp=$comp  plane=[${plane:-midbox}]  kind=$name_kind"
     # shellcheck disable=SC2086
-    "$PYTHON_BIN" -m post slices $deck_arg "$field" $plane -c "$comp" -o "$out"
+    "$PYTHON_BIN" -m post.python slices $deck_arg "$field" $plane -c "$comp" -o "$out"
     echo "    wrote: $out"
 }
 
@@ -207,7 +208,7 @@ cmd_all() {
 cmd_list() {
     echo "$SEP"
     echo "==> available pipeline tools"
-    "$PYTHON_BIN" -m post --list
+    "$PYTHON_BIN" -m post.python --list
 }
 
 # --- dispatch ----------------------------------------------------------------

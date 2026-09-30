@@ -18,7 +18,7 @@ changes when the code calls spanwise "z" instead of "y" -- so the only thing
 the new code must do to "adopt" an old-CPL file is relabel the velocity
 components:  spanwise v_cpl  ->  new w (spanwise),  shear w_cpl  ->  new v
 (shear).  Both the Fortran reader (src/hst_io.f90::restart_read, with
-CPL_ORDER = [1, 3, 2]) and the Python reader (post/io.py::read_field) already
+CPL_ORDER = [1, 3, 2]) and the Python reader (post/python/io.py::read_field) already
 apply exactly that swap.
 
 This script proves it on ``run/Dati.cart.in.Re2000``:
@@ -46,8 +46,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
-from post.io import read_field
-from post.config import load_config
+from post.python.io import read_field
+from post.python.config import load_config
 
 
 def header_int(head: bytes, key: str) -> int:

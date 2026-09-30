@@ -2,11 +2,11 @@
 
 Usage::
 
-    python3 -m post <tool> [deck] [tool args...]
+    python3 -m post.python <tool> [deck] [tool args...]
 
 ``deck`` is the run directory or an ``hst.in`` path (default: ``hst.in`` in the
 current working directory).  The remaining arguments are passed to the tool.
-List the available tools with ``python3 -m post --list``.
+List the available tools with ``python3 -m post.python --list``.
 """
 
 from __future__ import annotations
@@ -45,7 +45,7 @@ def main(argv=None) -> int:
     tool = TOOLS.get(tool_name)
     if tool is None:
         print(f"unknown tool '{tool_name}'", file=sys.stderr)
-        print("run `python3 -m post --list` for the available tools", file=sys.stderr)
+        print("run `python3 -m post.python --list` for the available tools", file=sys.stderr)
         return 2
 
     # Determine the deck.  An explicit first positional that looks like a run
