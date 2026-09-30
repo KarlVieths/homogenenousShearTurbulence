@@ -14,11 +14,13 @@ post-processor needs out of hst.in and emits them as flat tokens.
 Axis relabel: hst.in &mesh uses the NEW-code convention
   ny = physical shear points, nz = spanwise Fourier modes,
 while the CPL post-processor uses
+  nx = same,
   ny_cpl = spanwise modes (= nz_new),   nz_cpl = ny_new + 1.
-The post-processor's array extents are COMPILE-TIME constants (CPL rejects
-runtime assignment to an INTEGER CONSTANT), so it does NOT read nx/ny/nz from
-the deck; this script only checks them against the compiled values (below) and
-warns on mismatch.
+readinput.cpl declares nx/ny/nz as plain INTEGERs (no CONSTANT), so CPL builds
+its field arrays with RUNTIME extents taken from these readinput.in tokens
+(CPL's compiler automatically heap-allocates arrays whose bounds are not
+compile-time constants).  This script therefore emits nx/ny/nz (already in the
+CPL convention) FIRST, so readinput.cpl reads them before touching any array.
 
 Usage:
     python3 convert_hstin.py [hst.in] [readinput.in]
@@ -28,12 +30,6 @@ Defaults: input hst.in, output readinput.in (next to this script).
 import re
 import sys
 from pathlib import Path
-
-# Compiled CPL-convention array extents (post/cpl/readinput.cpl).  Keep in
-# sync with the `INTEGER CONSTANT nx=.., ny=.., nz=..` line there.
-COMPILED_NX = 65
-COMPILED_NY = 22   # spanwise modes            = hst.in &mesh nz
-COMPILED_NZ = 87   # physical points + 1       = hst.in &mesh ny + 1
 
 # Fortran logical -> the YES/NO spelling the CPL boolean reader understands.
 BOOL = {'.true.': 'YES', '.false.': 'NO', 'true': 'YES', 'false': 'NO',
@@ -61,10 +57,18 @@ TOKENS = [
 ]
 
 def parse_deck(path):
-    """Return dict key -> (value_string, raw) for the given namelist deck."""
+    """Return dict key -> value_string for the given namelist deck.
+
+    Handles multiple `name = value` pairs on one line (e.g. `nx = 65, ny = 86,
+    nz = 22`) by splitting each line on commas.  Tolerates a trailing comma on
+    the last pair and a trailing `! comment`.  Note: this assumes no rhs value
+    itself contains a comma (true for this deck).  Quoted string values are
+    kept verbatim, so readinput.cpl's STRING reader sees the unquoted name from
+    convert_hstin.py after quoting is stripped there.
+    """
     vals = {}
     group = None
-    for lineno, line in enumerate(path.read_text().splitlines(), 1):
+    for line in path.read_text().splitlines():
         stripped = line.split('!', 1)[0].strip()   # drop trailing comments
         if not stripped:
             continue
@@ -75,12 +79,10 @@ def parse_deck(path):
         if stripped == '/' or (low == '&end' and group):
             group = None
             continue
-        m = re.match(r'([A-Za-z_]\w*)\s*=\s*(.+)', stripped)
-        if m:
-            key, val = m.group(1), m.group(2).strip()
-            if val.endswith(','):
-                val = val[:-1].strip()
-            vals[key] = val
+        for piece in stripped.split(','):
+            m = re.match(r'([A-Za-z_]\w*)\s*=\s*(.*)', piece.strip())
+            if m:
+                vals[m.group(1)] = m.group(2).strip()
     return vals
 
 def main():
@@ -89,20 +91,18 @@ def main():
 
     vals = parse_deck(src)
 
-    # Optional: verify the compile-time mesh agrees with the deck (axis-relabelled).
-    try:
-        deck_nx = int(vals.get('nx'))
-        deck_ny = int(vals.get('ny'))
-        deck_nz = int(vals.get('nz'))
-        if (deck_nx, deck_nz, deck_ny + 1) != (COMPILED_NX, COMPILED_NY, COMPILED_NZ):
-            print(f'WARNING: postprocess is compiled for nx={COMPILED_NX} ny={COMPILED_NY} nz={COMPILED_NZ} '
-                  f'(CPL convention) but {src.name} says &mesh nx={deck_nx} ny={deck_ny} nz={deck_nz}. '
-                  'Recompile with matching constants or the field headers will not line up.',
-                  file=sys.stderr)
-    except (KeyError, ValueError):
-        pass
-
     out = []
+    # Array extents come from &mesh and are emitted FIRST, in the CPL convention
+    # (ny_cpl = spanwise modes = deck nz; nz_cpl = physical points + 1 = deck ny+1).
+    # readinput.cpl reads these into its plain INTEGER nx/ny/nz before any array
+    # is built, so CPL sizes the field arrays at runtime.
+    deck_nx = int(vals['nx'])
+    deck_ny = int(vals['ny'])      # physical shear points (new-code)
+    deck_nz = int(vals['nz'])      # spanwise Fourier modes  (new-code)
+    out.append(f'nx = {deck_nx}')
+    out.append(f'ny = {deck_nz}')          # spanwise modes
+    out.append(f'nz = {deck_ny + 1}')      # physical points + 1
+
     for name, key, grp in TOKENS:
         if key not in vals:
             print(f'WARNING: {src.name} has no `{key}` in &{grp}; leaving it unset.', file=sys.stderr)
