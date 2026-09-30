@@ -79,6 +79,14 @@ If `Dati.cart.out` exists it is read (with `time_from_restart = .true.`
 the clock too); a field written by the CPL code works as well.  Otherwise
 a seeded, divergence-free random field is generated (`&init`).
 
+A production run goes in segments: `wall_max` in `&time_control` (seconds
+of wall-clock time, 0 = none) ends the run cleanly with its restart file,
+and `jobs/horeka_prod.slurm` sets it from the job's time limit and
+resubmits itself from `Dati.cart.out` until `t_max` (header of the script;
+`examples/prod_re20000.in` is the production deck, the reasoning in
+FINDINGS.md "Production run").  Every snapshot and restart write prints
+its duration.
+
 `timing = .true.` in `&time_control` prints the wall-clock time per phase
 of the substep at the end of the run (`src/hst_timer.f90`; the transposes
 are inside the transform and product phases, since the alltoall of one
@@ -117,6 +125,20 @@ in C order with the four ghost rows, in CPL names (`ny_cpl` = our `nz`,
 `nz_cpl` = our `ny + 1`, their `(v, w)` = our `(w, v)`).  Pressure files
 are the same array without header and with one component.
 `tests/compare_fields.py` reads both.
+
+`jobs/cpl_postprocess.sh <run dir> [nranks]` runs the CPL chain on a run
+directory: it writes `scddns.in` and `postpro.in` in CPL names, builds
+`postpro.cpl` from a copy of `hst-main` (with `cpl` and `mpicc` on the
+PATH; the copy gets one patch, since `hst-main/postprocess` passes a fifth
+argument to `penta_smw_solve` that its `linsolver_smw.cpl` no longer
+takes) and leaves `statistics/` with the Reynolds stresses and spectra per
+plane, the budgets and the mean profiles.  On a single field its `rms.dat`
+equals the line of `variances_runtime.dat` at that time to 1e-7; over
+several fields it subtracts the squared *time-averaged* mean profile, so
+it differs from the time average of our lines by that variance.  With
+`PRESSURE=cpl` it recomputes the pressure files with `prepare_pressure.cpl`
+(ours agree with them to 1e-4 outside the (0,0) mode, whose constant
+differs).
 
 ## Tests
 

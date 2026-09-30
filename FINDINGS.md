@@ -1465,3 +1465,91 @@ the login node's CPU run at 3e-14.  The branch `multinode-y` was then deleted
 (locally and on origin) and the `-main` worktree removed; its HoreKA copies (`~/hst-y`, `~/hst-exp`,
 `~/hst-exp2`) are now the code of `main` minus the docs.
 
+
+## Production run (2026-09-30, session 12, handoff item 1)
+
+**The H100 will not come.**  The user cancelled job 5170169: the
+`accelerated-h100` partition stays in its reservation for good, HoreKA is
+being migrated to a new machine.  `~/hst-y/build-h100` is dead weight.
+
+**What a production run needs that the benchmarks did not.**  Two small
+additions to `hst.f90` (safety net green on CPU, GPU and NCCL, the `npy`
+round trips included): `wall_max` in `&time_control` ends the run after
+that many seconds of wall-clock time, decided on rank 0 and broadcast
+every step (the ranks' clocks differ, and a loop exit that one rank takes
+alone is a deadlock), so that a SLURM segment writes its restart file and
+the next job continues; and every snapshot and restart write prints its
+duration.  `jobs/horeka_prod.slurm` runs a deck in segments: it copies
+the deck to the run directory with `wall_max` = the job's time limit
+minus `MARGIN` (600 s) and `time_from_restart = .true.`, and resubmits
+itself (same partition, nodes and limit) while the log says the
+wall-clock limit ended the run, up to `MAXSEG` segments.  The output of
+the big run goes to a workspace, `/hkfs/work/workspace/scratch/xt8786-hst`
+(`ws_allocate hst 60`, 2026-09-30).
+
+**How long the 1024^3 restart file takes.**  Job 5170168's 8-rank run
+(`~/hst-runs/scal-a4/2node-bench_1024-np8-npy0`) wrote its 25.8 GB
+`Dati.cart.out` between the last `Runtimedata` line (04:21:02) and the
+file's mtime (04:23:28): about 140 s, 185 MB/s, on the home file system
+(not Lustre: `lfs getstripe` refuses it).  Each rank's subarray view is
+made of 24 KB pieces (`ncomp * nyB` complexes), which is what collective
+MPI-IO gets from that; a production run at that size with 10 velocity
+snapshots, 10 pressure files and 10 restarts would spend about 1 h of a
+30 h run writing.  Tolerable for the first run; the levers, if it
+matters, are ROMIO's collective-buffering hints and the workspace file
+system, both untested.
+
+**The CPL post-processing on our files.**  `jobs/cpl_postprocess.sh`
+writes `scddns.in` (CPL names: their `ny` = our `nz`, their `nz` = our
+`ny + 1`) and `postpro.in` next to `hst.in`, builds `postpro.cpl` with
+`mpicpl` from a copy of `hst-main` and runs it.  The copy needs one
+patch: `hst-main/postprocess/convenience.cpl` and
+`pressure_reconstruction/poisson.cpl` call `penta_smw_solve` with a fifth
+argument `check_linsolve` that `linsolver_smw.cpl` no longer takes (the
+CPL compiler says "function expected"), i.e. the post-processing of
+`hst-main` is out of step with its solver; the script drops the argument
+in its copy (`hst-main` itself is not touched).  Checked on the default
+deck run to t = 2 from an energetic field (amplitude 0.003, kpeak 8: q2 =
+0.12) with four snapshots on the RTX 3060:
+
+| CPL result | against | agreement |
+| --- | --- | --- |
+| `rms.dat` (uu, vv, ww, uv per plane) of one field, plane average | the `variances_runtime.dat` line at that time | 1e-7 |
+| the same over the four fields | the time average of our four lines | 0.2-1.4% (uu, vv, uv), exact for ww |
+| `pField<n>.fld` recomputed by `prepare_pressure.cpl` (`PRESSURE=cpl`) | our online pressure, (0,0) mode excluded | 9e-5 relative |
+| its (0,0) mode | ours | differs (ours is -<vv>_xz with zero mean; CPL's singular solve fixes the constant differently) |
+
+The percent-level differences over several fields are the tool's
+definition, not an error: `compute_re_stresses` subtracts the squared
+*time-averaged* mean profile (the (0,0) mode, rms 0.02 here) from the
+time-averaged second moments, while our lines subtract nothing (the mean
+profile is part of the box energy) -- for w there is no mean profile and
+the numbers are identical.  `uiuj.bin` and `mke.bin` (the budgets) are
+produced from our pressure files; their contents were not checked against
+anything.
+
+**The deck (`examples/prod_re20000.in`).**  The size was left to the
+user; this is the recommendation, chosen so that the run is resolved and
+isotropic rather than as large as possible.  Resolution from the long
+sheared run of WP5 (Re = 1000, Re_lambda 33, S* 6.3): eta = 0.0157
+there (from Re_lambda and S* with q2 = 0.104, eps = 0.0165), i.e. the
+default deck's resolution was dx/eta = dy/eta = 1.0 and dz/eta = 0.33
+(the table of WP5 says dx/eta = 2 because it took nxd as the number of
+x points; there are 2 nxd).  With the dissipation set by the box (eps =
+S q2/S*, q2 about 0.1 whatever nu), eta = 0.0157 (1000/Re)^(3/4): Re =
+20000 gives eta = 0.0017, and the grid 1536 x 1024 x 512 (nx = 511, ny =
+1024, nz = 170, nzd = 512) has dx = dy = dz = 0.00195, dx/eta = 1.2, kmax
+eta = 1.8 in x, 5 in z (the retained modes), Re_lambda about 33 sqrt(20)
+= 150 (Sekimoto et al. reach 250).  That is one third of the points of
+`bench_1024`, so about 13 GB per GPU on two A100 nodes; `nx = 3 nz` is
+what WP5 asked for in this box, `nx = nz` (the benchmark decks) resolves
+z three times finer than x for nothing.  CFL 1 with the fluctuations
+alone in the CFL (u' about 0.2, peaks 3-4x): dt about 0.001, 80-100 k
+steps to S t = 100; at a third of the 1024^3 step (0.33-0.45 s) 8-12 h on
+two nodes.  Snapshots every 5 time units (8.6 GB velocity, 2.9 GB
+pressure, 230 GB in all), restart every 5.  The initial field:
+amplitude 0.003 at kpeak 8, i.e. q2 = 0.12 from the start (amplitude
+0.05 gives q2 = 32 on any grid of this box, `bench_1024`'s log and the
+64^3 run agree to all digits: the amplitude scales the potential, not the
+rms), instead of the 1e-3 at kpeak 4 of the default deck (q2 = 4e-4,
+S t = 30 of growth).
