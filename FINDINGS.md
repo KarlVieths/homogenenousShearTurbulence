@@ -1619,3 +1619,34 @@ statistics lines differ already at t = 0 in the last digits of `uw/2`
 fields of the regression are).  The CPL `rms.dat` of `prod-small-b`
 over its seven snapshots gives -uv/q2 = 0.171 (its `uw` column is our
 u v).
+
+**Why the CPL pressure and ours differ by 1e-4 (the user asked).**  The
+two codes discretize the same Poisson equation with the same compact
+operators but different right-hand sides: CPL forms the nine velocity
+gradients with the compact `D1`, multiplies them in physical space
+(`2 (ux vy + ...)`), and applies `D0`; we form the six products and take
+`D1` and `D2` of them (`D2 vv`, `2 i alfa D1 uv`, ...).  In the continuum
+these are equal by continuity; discretely the product rule holds only
+up to the truncation error, and the difference is that error.  Checked
+on the default deck at t = 0.5 (one snapshot, 64 x ny x 64, the (0,0)
+mode excluded), CPL's `prepare_pressure` against our online pressure:
+
+| ny | max diff / max p | rms diff / rms p | diff/p in the kx = 0 plane by y-mode band m |
+| --- | --- | --- | --- |
+| 64 | 1.6e-3 | 4.4e-3 | 4e-4 (m < 4), 9e-4 (4-8), 1e-2 (8-16), 0.28 (16-32) |
+| 128 | 9.2e-5 | 2.5e-4 | 2e-5, 5e-5, 7e-4 (8-16), 1e-2 (16-32), 0.45 (32-64) |
+| 256 | 5.2e-6 | 1.4e-5 | 1e-6, 3e-6, 4e-5 (8-16), 7e-4 (16-32), 2e-2 (32-64), 1.2 (64-128) |
+
+A factor 17.7 per halving of dy, i.e. fourth order, and the difference
+sits in the highest y-modes: for a given band it also falls 16x per
+halving.  The stencil says why fourth: the construction in
+`setup_derivatives` makes `D4` exact on polynomials up to degree 8
+(sixth order, relative error 2e-8 at k dy = 0.2) but `D1` and `D2` exact
+only up to degree 4, fourth order (6.7e-6 at k dy = 0.2, 16x per
+doubling of k), the classical five-point compact scheme of the CPL and
+channel codes.  README.md called the scheme sixth-order; corrected.  So
+the 1e-4 at ny = 128 is the y-truncation error of the pressure at that
+deck's resolution (dy/eta = 1, k dy up to pi), not a defect of either
+code, and the same number measures how far the pressure of the
+production deck (dx/eta = 1.2) can be trusted in its dissipative range:
+a few per cent at k dy = 1, as for any fourth-order DNS.

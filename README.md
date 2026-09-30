@@ -16,7 +16,8 @@ optionally with an unsteady spanwise component `W = S2(t)*y`
 `SLdata.cpl` model, on a grid clustered at mid-box with `ystretch`), in a
 box that is periodic in `x` (streamwise) and `z` (spanwise) and
 shear-periodic in `y`: Fourier in `x` and `z` with 3/2 dealiasing, compact
-(sixth-order, five-point) finite differences in `y`, velocity-vorticity
+(five-point, fourth-order for `d/dy` and `d2/dy2`, sixth for `d4/dy4`)
+finite differences in `y`, velocity-vorticity
 (`v`, `eta`) formulation, RK3 (Rai-Moin) for the nonlinear terms,
 Crank-Nicolson for the viscous ones, and the mean-shear advection
 integrated exactly by a phase shift (Sekimoto, Dong & Jimenez).  The
