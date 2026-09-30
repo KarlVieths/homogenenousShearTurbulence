@@ -1,0 +1,40 @@
+! Read discretization and simulation parameters from input file
+
+! Declare variables read from input file
+INTEGER CONSTANT nx,ny,nz
+REAL    CONSTANT alpha0,beta0
+REAL    CONSTANT htcoeff
+REAL    CONSTANT Re
+REAL             deltat
+REAL    CONSTANT cflmax, t_max
+REAL    CONSTANT dt_field,dt_save,dt_stat,dt_chk_cfl
+REAL             S
+REAL    CONSTANT A, T, delta_SL, t0_SL, dt_rise
+BOOLEAN          time_from_restart
+STRING           Vfield
+
+! Read from input file
+FILE data=OPENRO[IF COMMANDLINE.HI>0 THEN COMMANDLINE(1) ELSE "scddns.in"]
+  READ BY NAME FROM data nx,ny,nz,alpha0,beta0,htcoeff,Re
+  READ BY NAME FROM data deltat, cflmax
+  READ BY NAME FROM data t_max, dt_field, dt_save, dt_stat, dt_chk_cfl, time_from_restart
+  READ BY NAME FROM data S
+  READ BY NAME FROM data A, T
+  READ BY NAME FROM data delta_SL, t0_SL, dt_rise
+  LOOP UNTIL EOF(data) OR READ BY NAME FROM data Vfield
+    READ FROM data
+  REPEAT
+CLOSE data
+
+REAL CONSTANT eps_num=1E-10
+INTEGER count
+REAL time=0, start_time=0 
+
+REAL nu
+IF Re>0 THEN
+  nu = 1/Re
+ELSE
+  nu = 0
+END IF
+
+REAL S1 = S
