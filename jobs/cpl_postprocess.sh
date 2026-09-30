@@ -53,7 +53,9 @@ if [ ! -x "$b/postpro" ] || [ "${PRESSURE:-}" != "$(cat "$b/.pressure" 2>/dev/nu
   sed -i 's/, check_linsolve)/)/' "$b"/postprocess/convenience.cpl "$b"/pressure_reconstruction/poisson.cpl
   [ "${PRESSURE:-}" = cpl ] || sed -i 's/^#define pressure_fields/! #define pressure_fields/' "$b/flags.cpl"
   echo "${PRESSURE:-}" > "$b/.pressure"
-  ( cd "$b" && mpicpl postpro.cpl 2>&1 | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' | grep -E "ERROR|error" ) || true
+  # mpicpl compiles with the flags of `mpicc -show` but links with -lmpi alone: give the linker the -L paths (HoreKA's modules)
+  ( cd "$b" && LOADLIBES="$(mpicc -show | grep -oE -- '-L[^ ]+' | tr '\n' ' ')${LOADLIBES:-}" mpicpl postpro.cpl 2>&1 \
+    | sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' | grep -E "ERROR|error" ) || true
   [ -x "$b/postpro" ] || { echo "postpro did not build (see $b)"; exit 1; }
 fi
 mkdir -p "$run/statistics"
