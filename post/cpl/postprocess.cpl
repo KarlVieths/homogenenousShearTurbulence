@@ -1,0 +1,114 @@
+! run-time bounds checking (high impact on performance)
+USE rtchecks
+
+! compile-time flags (physics- and numerics-related options)
+USE flags
+
+! standard cpl modules
+USE complex
+USE rbmat
+USE cbmat
+USE fft
+
+! program modules
+USE readinput
+USE linsolver_smw
+USE S2config
+USE zdiscret
+USE src_postprocess/convenience_postprocess
+USE hstfieldio
+USE src_postprocess/io_postprocess
+USE src_postprocess/mod_rey_decomp
+#ifdef compute_pressure
+    USE src_postprocess/poisson
+#endif
+#ifdef compute_variances
+    USE src_postprocess/mod_compute_variances
+#endif
+#ifdef compute_budget
+    USE src_postprocess/mod_compute_budget
+#endif
+
+#ifdef compute_pressure
+    LOOP FOR nf = nstart TO nend
+        ! Phase info
+        phase_num = [(nf-1) MOD dn] + 1
+        phase_pos = [(nf-1) DIV dn] + 1
+        ! Read velocity field
+        vel_fld_name = WRITE(path_to_fields'field'nf'.fld')
+        read_vel_field(vel_fld_name)
+        WRITE "PRESS: reading " vel_fld_name " at time=" time " ..."
+        ! Compute velocity gradient
+        velocity_gradient(Vder)
+        ! Update periodic boundary condition for Vder
+        DO pbc(Vder(ix,iy,*,i)) FOR ALL ix,iy,i
+        ! Compute pressure
+        compute_pressure(Vder)
+        ! Update periodic boundary condition for pressure
+        DO pbc(pressure(ix,iy,*)) FOR ALL ix,iy 
+        ! Save pressure field
+        pfield_name = WRITE(path_to_pfields'pField'nf'.fld')
+        pressuredata = CREATE(pfield_name)
+            pressuredata(*,*,*)=pressure(*,*,*)
+        CLOSE(pressuredata)
+    REPEAT LOOP
+    MPI_Barrier(MPI_COMM_WORLD)
+#endif
+
+LOOP FOR nf = nstart TO nend
+    ! Phase info
+    phase_num = [(nf-1) MOD dn] + 1
+    phase_pos = [(nf-1) DIV dn] + 1
+    ! Read velocity field
+    vel_fld_name = WRITE(path_to_fields'field'nf'.fld')
+    read_vel_field(vel_fld_name)
+    WRITE "MEAN: reading " vel_fld_name " at time=" time " ..."
+    ! Read pressure field
+    press_fld_name = WRITE(path_to_pfields'pField'nf'.fld')
+    read_press_field(press_fld_name)
+    ! Accumulate mean values
+    accum_means()
+REPEAT LOOP
+mpi_comm_means()
+MPI_Barrier(MPI_COMM_WORLD)
+
+LOOP FOR nf = nstart TO nend
+    ! Phase info
+    phase_num = [(nf-1) MOD dn] + 1
+    phase_pos = [(nf-1) DIV dn] + 1
+    ! Read velocity field
+    vel_fld_name = WRITE(path_to_fields'field'nf'.fld')
+    read_vel_field(vel_fld_name)
+    WRITE "VAR: reading " vel_fld_name " at time=" time " ..."
+    #ifdef compute_budget
+        ! Read pressure field
+        press_fld_name = WRITE(path_to_pfields'pField'nf'.fld')
+        read_press_field(press_fld_name)
+    #endif
+    ! Compute fluctuating fields
+    apply_rey_decomp()
+    #ifdef compute_variances
+        ! Accumulate mean velocities and velocity variances
+        accum_variances()
+    #endif
+    #ifdef compute_budget
+        ! Compute derivatives
+        velocity_gradient(Vder)
+        ! Update periodic boundary condition for Vder
+        DO pbc(Vder(ix,iy,*,i)) FOR ALL ix,iy,i
+        ! Accumulate budget terms
+        accum_budget()
+    #endif
+REPEAT LOOP
+
+#ifdef compute_variances
+    mpi_comm_variances()
+    write_variances()
+#endif
+#ifdef compute_budget
+    mpi_comm_budget()
+    write_budget()
+#endif
+
+MPI_Finalize()
+STOP

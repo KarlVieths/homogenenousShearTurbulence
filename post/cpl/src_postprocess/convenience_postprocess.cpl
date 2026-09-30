@@ -1,0 +1,109 @@
+! READ POSTPRO INPUT FILE
+! ------------------------------------
+STRING input_post=WRITE("postpro.in")
+STRING path_name
+INTEGER nfmin,nfmax,nftot,dn,nf_phase
+FILE data_post=OPENRO[IF COMMANDLINE.HI>0 THEN COMMANDLINE(1) ELSE input_post]
+  READ BY NAME FROM data_post nfmin, nfmax, dn, path_name
+CLOSE data_post
+nftot = nfmax-nfmin+1
+
+STRING vel_fld_name, press_fld_name
+STRING path_to_fields=WRITE(path_name'fields/')
+STRING path_to_pfields=WRITE(path_name'p_fields/')
+STRING path_to_statistics=WRITE(path_name'statistics/')
+! STRING filename_out,field_name,pfield_name
+! FILE out
+
+! INITIALIZE MPI
+! ------------------------------------
+#include <mpi.h>
+#link "-lmpi"
+#include <fenv.h>
+INTEGER totnproc, rank
+fedisableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
+MPI_Init(argc,argv) ! on some systems triggers a floating-point exception
+feenableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
+MPI_Comm_size(MPI_COMM_WORLD, totnproc)
+MPI_Comm_rank(MPI_COMM_WORLD, rank)
+
+! WORK DISTRIBUTION OVER PROCESSES
+! ------------------------------------
+INTEGER nstart, nend, chunk, remainder
+chunk     = nftot DIV totnproc
+remainder = nftot MOD totnproc
+IF rank < remainder THEN
+  nstart = nfmin  + rank * (chunk + 1)
+  nend   = nstart + (chunk + 1) - 1
+ELSE
+  nstart = nfmin  + remainder * (chunk + 1) + (rank - remainder) * chunk
+  nend   = nstart + chunk - 1
+END IF
+IF nend>nfmax THEN nend = nfmax
+
+! GLOBAL VARIABLES
+! ------------------------------------
+! Extended Fourier-lattice for FFTs
+INTEGER nxd=3*nx DIV 2 -1; DO INC nxd UNTIL FFTfit(nxd)
+INTEGER nyd=3*ny -1; DO INC nyd UNTIL FFTfit(nyd)
+! Types
+VELOCITY  = STRUCTURED ARRAY(u,v,w) OF COMPLEX
+DERIVS    = STRUCTURED ARRAY(ux,uy,uz,vx,vy,vz,wx,wy,wz) OF COMPLEX
+! Physical variables
+ARRAY(0..nx,-ny..ny,-1..nz+1) OF VELOCITY V        = 0
+ARRAY(0..nx,-ny..ny,-1..nz+1) OF DERIVS   Vder     = 0
+ARRAY(0..nx,-ny..ny,-1..nz+1) OF COMPLEX  pressure = 0
+! Phase-related variables
+INTEGER phase_num, phase_pos
+INTEGER nf_phase=[(nfmax-nfmin) DIV dn]+1
+ARRAY(1..dn) OF INTEGER nf_vec=0
+LOOP FOR nf = nfmin TO nfmax
+    nf_vec([[(nf-1) MOD dn]+1]) = ~+ 1
+REPEAT
+! Actual domain size for computing averages using zintegr()
+REAL Lz_ext = 0
+DO Lz_ext = ~+ [z(iz+1) - z(iz-1)] FOR iz = 1 TO nz-1 BY 2
+
+
+! Outputs 
+! -----------------------------
+POINTER TO STORED ARRAY(0..nx,-ny..ny,-1..nz+1) OF COMPLEX pressuredata
+
+SUBROUTINE updateD0mat(INTEGER ix,iy)
+  D0mat=D0mat_0
+  D0mat(1,1)    = derivatives(1   ).d0(-2) * spbc_shift(ix, iy, nz-2, -1  )
+  D0mat(1,2)    = derivatives(1   ).d0(-1) * spbc_shift(ix, iy, nz-1,  0  )
+  D0mat(2,1)    = derivatives(2   ).d0(-2) * spbc_shift(ix, iy, nz-1,  0  )
+  D0mat(nz-2,5) = derivatives(nz-2).d0( 2) * spbc_shift(ix, iy, 1   , nz  )
+  D0mat(nz-1,4) = derivatives(nz-1).d0( 1) * spbc_shift(ix, iy, 1   , nz  )
+  D0mat(nz-1,5) = derivatives(nz-1).d0( 2) * spbc_shift(ix, iy, 2   , nz+1)
+END updateD0mat
+
+SUBROUTINE velocity_gradient(POINTER TO ARRAY(*,*,*) OF DERIVS gradV)
+  LOOP FOR ix=0 TO nx
+    ialpha = I*alpha0*ix
+    LOOP FOR iy=-ny TO ny WITH gradV(ix,iy,*), V(ix,iy,*)
+      ibeta = I*beta0*iy  
+      updateD0mat(ix,iy)
+      ux(*)=ialpha*u(*);   vx(*)=ialpha*v(*);     wx(*)=ialpha*w(*)
+      uy(*)=ibeta*u(*);    vy(*)=ibeta*v(*);      wy(*)=ibeta*w(*)
+      deriv(u(*),uz(*),ix,iy); deriv(v(*),vz(*),ix,iy); deriv(w(*),wz(*),ix,iy); 
+    REPEAT
+  REPEAT
+END velocity_gradient
+
+! ----------------
+! derivm (real first derivative for deriving mean quantities)
+! ----------------
+SUBROUTINE derivm(ARRAY(*) OF REAL f0,f1^)
+  DO WITH derivatives(iz) f1(iz)=[SUM d1(k).REAL*f0({[(iz+k-1) MOD (nz-1)]+1}) FOR k=-2 TO 2] FOR iz=1 TO nz-1
+  penta_smw_solve_r(nz-1, D0mat.REAL, f1(1..nz-1), f1(1..nz-1))
+END derivm
+
+! ----------------
+! deriv2m (real second derivative for deriving mean quantities)
+! ----------------
+SUBROUTINE deriv2m(ARRAY(*) OF REAL f0,f2^)
+  DO WITH derivatives(iz) f2(iz)=[SUM d2(k).REAL*f0({[(iz+k-1) MOD (nz-1)]+1}) FOR k=-2 TO 2] FOR iz=1 TO nz-1
+  penta_smw_solve_r(nz-1, D0mat.REAL, f2(1..nz-1), f2(1..nz-1))
+END deriv2m

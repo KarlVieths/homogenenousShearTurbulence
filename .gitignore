@@ -71,5 +71,11 @@ Testing/
 *.pyc
 */__pycache__/
 
+# cpl build directories
+*.cpl/
+
+# cpl executables
+postprocess
+
 # run directory
 run/
