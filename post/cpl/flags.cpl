@@ -1,32 +1,3 @@
-! PHYSICS-RELATED FLAGS
-! Options:
-!   - unsteady spanwise shear (S2)
-!   - Stokes Layers (SL)
-!   - linearized Navier-Stokes equations (linearNS)
-! WARNING:
-!   "spanwShear" and "StokesLayer" can NOT be simulatneously activated.
-!   If both flags are defined at the same time, only "StokesLayer" will
-!   be considered, while "spanwShear" will be automatically discarded.
-! #define StokesLayer
-! #define linearNS
-
-! NUMERICS-RELATED FLAGS
-#define domainDecompVar
-#define variances_runtime
-! #define num_integration
-
-! INTERNAL FLAGS FOR STOKES LAYER OPTION
-#ifdef StokesLayer
-  !#define smoothStep
-  #define bodyforce
-  #ifdef bodyforce
-    #define bf_dvw
-  #endif
-#endif
-
-! EXTRACT ONLY STREAKS FROM INITIAL CONDITION
-! #define synthetic_init
-
 ! POSTPRO FLAGS
 #define compute_variances
 #define compute_pressure
