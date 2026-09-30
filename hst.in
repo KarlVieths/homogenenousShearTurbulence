@@ -46,7 +46,7 @@
 /
 
 &init
-  amplitude = 1.0e-3            ! rms of the random initial field
-  seed = 1                      ! same seed, same field, on any rank count
-  kpeak = 4.0                   ! wavenumber of the initial spectrum peak
+  amplitude = 0.003             ! scales the random vector potential: 0.003 at kpeak = 8 gives q2 = 0.12 (0.05 gives 32),
+  seed = 1                      !   about the stationary value; 1e-3 at kpeak = 4 (q2 = 4e-4) decays without transition (FINDINGS.md)
+  kpeak = 8.0                   ! wavenumber of the initial spectrum peak
 /
