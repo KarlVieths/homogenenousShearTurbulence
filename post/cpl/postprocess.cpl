@@ -2,7 +2,7 @@
 USE rtchecks
 
 ! compile-time flags (physics- and numerics-related options)
-USE flags
+USE src/flags
 
 ! standard cpl modules
 USE complex
@@ -11,22 +11,22 @@ USE cbmat
 USE fft
 
 ! program modules
-USE readinput
-USE linsolver_smw
-USE S2config
-USE zdiscret
-USE src_postprocess/convenience_postprocess
-USE hstfieldio
-USE src_postprocess/io_postprocess
-USE src_postprocess/mod_rey_decomp
+USE src/readinput
+USE src/linsolver_smw
+USE src/S2config
+USE src/zdiscret
+USE src/convenience_postprocess
+USE src/hstfieldio
+USE src/io_postprocess
+USE src/mod_rey_decomp
 #ifdef compute_pressure
-    USE src_postprocess/poisson
+    USE src/poisson
 #endif
 #ifdef compute_variances
-    USE src_postprocess/mod_compute_variances
+    USE src/mod_compute_variances
 #endif
 #ifdef compute_budget
-    USE src_postprocess/mod_compute_budget
+    USE src/mod_compute_budget
 #endif
 
 #ifdef compute_pressure

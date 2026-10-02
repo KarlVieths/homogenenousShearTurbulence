@@ -51,7 +51,9 @@ STRING restart_file       ! &time_control restart_file -> Vfield
 ! Read from input file.  nx/ny/nz MUST be read first: convert_hstin.py emits
 ! them as the first three tokens, already in the CPL convention, so they are
 ! assigned to the runtime globals before any field array is built.
-FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE "readinput.in"]
+STRING sim_input=WRITE("readinput.in")
+
+FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE sim_input]
   ! &mesh port ...: nx, ny, nz (CLP convention), then alfa0, beta0, ystretch
   READ BY NAME FROM data nx, ny, nz, alfa0, beta0, ystretch
   ! &physics ...: re, S, s2_amplitude, s2_period, s2_start, ...
@@ -62,9 +64,9 @@ FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE "readinput.in"]
   READ BY NAME FROM data t_max, dt_stat, dt_field, dt_save, time_from_restart
   ! optional trailing string (startup velocity file), looped like the legacy
   ! Vfield read so that a deck without it does not error
-  LOOP UNTIL EOF(data) OR READ BY NAME FROM data restart_file
-    READ FROM data
-  REPEAT
+  ! LOOP UNTIL EOF(data) OR READ BY NAME FROM data restart_file
+  !   READ FROM data
+  ! REPEAT
 CLOSE data
 
 ! --- map new-deck names onto the legacy globals --------------------------
@@ -81,7 +83,7 @@ delta_SL  = 0            ! unused by S2config; kept for its legacy slot
 ! ramp); to enable the smooth ramp add a `s2_rise_dt` token to &physics and
 ! read it into dt_rise above (token==name).
 dt_rise = 0
-Vfield = restart_file    ! startup velocity file name (informational)
+! Vfield = restart_file    ! startup velocity file name (informational)
 
 REAL CONSTANT eps_num=1E-10
 INTEGER count

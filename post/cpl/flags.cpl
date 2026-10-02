@@ -1,4 +1,0 @@
-! POSTPRO FLAGS
-#define compute_variances
-#define compute_pressure
-#define compute_budget
