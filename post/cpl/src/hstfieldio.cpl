@@ -41,7 +41,10 @@ SUBROUTINE read_restart_scalars()
   REPEAT
   READ BINARY FROM data time
   start_time=time
-  LOOP UNTIL READ BY NAME FROM data "S1="oldS1
+  ! hst writes the streamwise shear using the current `S=` label.  The
+  ! legacy CPL files used `S1=` here; searching for that label in an hst
+  ! field never succeeds and READ BY NAME keeps scanning at EOF forever.
+  LOOP UNTIL READ BY NAME FROM data "S="oldS1
     READ FROM data    
   REPEAT
   READ BINARY FROM data S1
