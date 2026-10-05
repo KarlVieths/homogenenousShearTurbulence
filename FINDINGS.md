@@ -1650,3 +1650,74 @@ deck's resolution (dy/eta = 1, k dy up to pi), not a defect of either
 code, and the same number measures how far the pressure of the
 production deck (dx/eta = 1.2) can be trusted in its dissipative range:
 a few per cent at k dy = 1, as for any fourth-order DNS.
+
+## The production run at Re = 20000 (2026-10-01 to 10-03, session 13, jobs 5171460 and 5174814)
+
+`examples/prod_re20000.in` (1536 x 1024 x 512, Re = 20000, S = 1, box
+3:2:1) to S t = 100 on two A100 nodes (8 ranks, 4 x-z pencils x 2 y
+slabs, NCCL), output in `/hkfs/work/workspace/scratch/xt8786-hst/re20000`
+(222 GB: 20 velocity snapshots of 8.6 GB, 20 pressure files of 2.9 GB,
+the restart file).  Two segments of `jobs/horeka_prod.slurm`: job
+5171460 waited 24 h in the `accelerated` queue, ran 11 h 51 min
+(`wall_max` = 42600 s) to S t = 90.0 in 121119 steps, wrote its restart
+file and submitted job 5174814, which waited 27 h and finished the last
+10 time units in 10997 steps and 1 h 14 min.  132116 steps in all, 13.1
+h of compute on 8 A100 (26 node-hours).
+
+**Cost.**  0.344 s/step of compute, 0.352 with the I/O (the estimate was
+0.33-0.45): snapshots (velocity + pressure, 11.5 GB) 19-29 s each,
+restart files (8.6 GB) 9-18 s each in segment 1, i.e. 400-900 MB/s on
+the workspace file system against 185 MB/s on the home file system for
+the 1024^3 benchmark, and 1.6% of the segment; in segment 2 two restart
+writes took 318 and 320 s (27 MB/s, the same code and file, other
+nodes) and the last 9.7 s, so the workspace has its bad moments.
+Memory: cuFFT 774 MB and two line-solver workspaces of 521 MB per rank;
+the peak was not sampled (a third of the 1024^3 run's 39.3 GB, i.e.
+about 13 GB).
+
+**The time step could only shrink (bug, fixed in session 13).**
+`compute_cfl` accumulated `cfl` with `reduction(max:cfl)` without ever
+resetting it, so the CFL-chosen step was the smallest the run had ever
+needed: 0.00132 from the initial field, 0.00074 from S t = 2 (the
+transient's velocity peak) to the end of segment 1, and 0.00091 after
+the restart, whose fresh `cfl` shows what the turbulent field itself
+allows.  The small runs did the same (0.00507 -> 0.00341 in steps,
+never up).  The step was therefore always safe, only short: the
+production run spent about 20% more steps than CFL = 1 needs, and the
+printed CFL column was 1.0 by construction (`cfl * deltat`).  Now `cfl =
+0` at the top of `compute_cfl`; the fixed-step decks of the tests are
+unaffected and the safety net is green.
+
+**Statistics (`Runtimedata`, S t = 30..100, 7001 samples; `energy` =
+<q2>, `diss` = <grad u : grad u> for ly = 2).**
+
+| quantity | Re = 20000, 1536 x 1024 x 512 | Re = 1000, 64 x 128 x 64 (`prod-small-b`) | literature |
+| --- | --- | --- | --- |
+| q2 | 0.083 | 0.132 | |
+| eps = diss/Re | 0.0112 | 0.0216 | |
+| S* = S q2/eps | 7.4 | 6.1 | 5..7 (Rogers & Moin 1987), up to 8 at high Re_z (Sekimoto, Dong & Jimenez 2016) |
+| -uv/q2 | 0.136 | 0.166 | 0.15 (Tavoularis & Karnik 1989) |
+| production / dissipation | 1.005 | 1.010 | 1 |
+| b_uu, b_vv, b_ww (our names: v vertical) | +0.14, -0.07, -0.07 | +0.13, -0.05, -0.08 | +0.2, -0.14, -0.06 |
+| Re_lambda = (q2/3) sqrt(15/(nu eps)) | 143 | 37 | |
+| eta = (nu^3/eps)^(1/4) | 0.00183 | 0.0147 | |
+| dx/eta = dy/eta = dz/eta | 1.07 | 1.06 (dz/eta 0.35) | |
+
+The resolution came out where the deck meant it to (eta = 0.0017 was
+the estimate, 0.00183 the result): kmax eta = 2.0 in x, 6 in z, the
+y grid at dy/eta = 1.07 with the compact scheme's fourth-order
+truncation (the pressure section above).  The flow is stationary from
+S t = 30 (the time series of q2 wanders between 0.05 and 0.11 over 10-20
+time units, the usual bursting of a shear-periodic box), production
+balances dissipation to 0.5%, and S* and -uv/q2 move the way the
+literature says they do with Re_z (S* up, -uv/q2 down from the small
+box).  Re_lambda = 143 is in Sekimoto et al.'s range (their largest
+boxes reach 250).
+
+**The chain as a workflow.**  Two things to keep: the segments cost
+nothing but the queue (24 h and 27 h here, for 12 h and 1.25 h of
+work), so one long segment beats several short ones on `accelerated`;
+and the restart repeats one `Runtimedata` line (10002 lines for S t =
+0..100 at dt_stat = 0.01).  The CPL post-processing of the 15 snapshots
+from S t = 30 runs as `jobs/horeka_postprocess.slurm` on a `cpuonly`
+node (job 5181558, 4 ranks, about 50 GB each).

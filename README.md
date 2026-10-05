@@ -226,7 +226,11 @@ step there, with the y exchange down to 2.5% of the step.  Four nodes
 the transforms halve exactly, but the gather of the line solver's
 reduced systems over four slabs is exposed (114 of the 630 ms at
 1024^3), the lever left for more nodes (FINDINGS.md, "Scaling").  On one node the x-z pencils stay (2 x 2 is 10-20% slower
-than 4 x 1).
+than 4 x 1).  The first production run (`examples/prod_re20000.in`,
+1536 x 1024 x 512 at Re = 20000, FINDINGS.md "The production run")
+took 0.344 s/step on two A100 nodes, 132116 steps and 13 h of compute to
+S t = 100 in two segments of `jobs/horeka_prod.slurm`, with the 11.5 GB
+snapshots at 19-29 s each.
 
 ## Status
 
