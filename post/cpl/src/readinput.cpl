@@ -69,6 +69,22 @@ FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE sim_input]
   ! REPEAT
 CLOSE data
 
+! Validate mesh dimensions before zdiscret.cpl constructs the mesh.  In
+! particular, zdiscret uses nz-1 in several denominators and requires at
+! least two wall-normal points.
+IF nx<=0 THEN
+  WRITE "ERROR: nx must be positive"
+  STOP
+END IF
+IF ny<0 THEN
+  WRITE "ERROR: ny must be nonnegative"
+  STOP
+END IF
+IF nz<=1 THEN
+  WRITE "ERROR: nz must be greater than 1"
+  STOP
+END IF
+
 ! --- map new-deck names onto the legacy globals --------------------------
 alpha0    = alfa0        ! renamed alfa0 -> alpha0
 htcoeff   = ystretch     ! &mesh ystretch -> htcoeff (0 = uniform grid)

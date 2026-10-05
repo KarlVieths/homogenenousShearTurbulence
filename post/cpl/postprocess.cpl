@@ -1,3 +1,11 @@
+! Disable floating-point traps before any USEd module is initialized.  CPL
+! emits module-level initialization (notably zdiscret's mesh construction)
+! before the executable statements in convenience_postprocess.cpl.  Some MPI
+! environments inherit enabled traps, so disabling them there is too late.
+#include <fenv.h>
+#link "-lmpi"
+fedisableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
+
 ! run-time bounds checking (high impact on performance)
 USE rtchecks
 
