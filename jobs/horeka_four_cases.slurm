@@ -11,15 +11,38 @@
 #SBATCH --time=00:10:00
 #SBATCH --output=hst-%j.out
 
-set -u
+set -euo pipefail
 
-HST_ROOT=${HST_ROOT:-$HOME/hst}
-HST_EXE=${HST_EXE:-$HST_ROOT/build-gpu-a100/hst}
+# Slurm executes a submitted batch script from a spool copy under
+# /var/spool/slurmd, so do not derive HST_ROOT from BASH_SOURCE.  Set HST_ROOT
+# to the actual checkout explicitly when submitting the job.
+HST_ROOT=${HST_ROOT:?Set HST_ROOT to the repository root containing env/ and build-gpu/}
+HST_EXE=${HST_EXE:-$HST_ROOT/build-gpu/hst}
+
+if [[ ! -r "$HST_ROOT/env/horeka.sh" ]]; then
+    echo "ERROR: cannot find $HST_ROOT/env/horeka.sh" >&2
+    echo "       Set HST_ROOT to the repository root containing env/ and build-gpu/." >&2
+    exit 2
+fi
 source "$HST_ROOT/env/horeka.sh" gpu
+
+if [[ ! -f "$HST_EXE" ]]; then
+    echo "ERROR: executable does not exist: $HST_EXE" >&2
+    echo "       Set HST_EXE to the GPU build executable." >&2
+    exit 2
+fi
+if [[ ! -x "$HST_EXE" ]]; then
+    echo "ERROR: executable is not executable: $HST_EXE" >&2
+    echo "       On HoreKA, run: chmod u+x $HST_EXE" >&2
+    ls -l "$HST_EXE" >&2 || true
+    exit 2
+fi
 
 echo "Job $SLURM_JOB_ID on $(hostname)"
 echo "MPI launcher: $(command -v mpirun)"
 echo "OPAL_PREFIX=${OPAL_PREFIX:-unset}"
+echo "HST_ROOT=$HST_ROOT"
+echo "HST_EXE=$HST_EXE"
 nvidia-smi -L
 
 run_sim() {
