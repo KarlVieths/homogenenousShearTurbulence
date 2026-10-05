@@ -158,12 +158,14 @@ contains
 
   ! Rank-local CFL estimate from the physical velocities; the caller reduces
   ! it over ranks.  Only the fluctuations count: the mean shear advection is
-  ! integrated analytically and imposes no step restriction.
+  ! integrated analytically and imposes no step restriction.  cfl is reset
+  ! first: until session 13 it was not, so the step could only shrink.
   subroutine compute_cfl()
     integer(C_INT) :: i, j, k, y_first, y_last
     real(C_DOUBLE) :: tmp
     y_first = ny0
     y_last = nyN
+    cfl = 0.0d0
     !$omp target teams distribute parallel do collapse(3) default(none) &
     !$omp shared(rVVdx, dx, dyl, dz, y_first, y_last, nxd, nzB) private(i, j, k, tmp) reduction(max:cfl)
     do i = y_first, y_last
