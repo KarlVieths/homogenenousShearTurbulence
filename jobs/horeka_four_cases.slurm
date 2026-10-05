@@ -18,6 +18,7 @@ set -euo pipefail
 # to the actual checkout explicitly when submitting the job.
 HST_ROOT=${HST_ROOT:?Set HST_ROOT to the repository root containing env/ and build-gpu/}
 HST_EXE=${HST_EXE:-$HST_ROOT/build-gpu/hst}
+CASE_ROOT=${CASE_ROOT:-$PWD}
 
 if [[ ! -r "$HST_ROOT/env/horeka.sh" ]]; then
     echo "ERROR: cannot find $HST_ROOT/env/horeka.sh" >&2
@@ -38,6 +39,14 @@ if [[ ! -x "$HST_EXE" ]]; then
     exit 2
 fi
 
+for i in 1 2 3 4; do
+    case_dir="$CASE_ROOT/sim$i"
+    if [[ ! -d "$case_dir" || ! -r "$case_dir/hst.in" ]]; then
+        echo "ERROR: missing simulation input: $case_dir/hst.in" >&2
+        exit 2
+    fi
+done
+
 echo "Job $SLURM_JOB_ID on $(hostname)"
 echo "MPI launcher: $(command -v mpirun)"
 echo "OPAL_PREFIX=${OPAL_PREFIX:-unset}"
@@ -55,7 +64,8 @@ run_sim() {
     # prevents Slurm from trying to provide a different MPI wireup layer.
     srun --exclusive --exact --ntasks=1 --cpus-per-task="$SLURM_CPUS_PER_TASK" \
         --gpus-per-task=1 --gpu-bind=closest --mpi=none \
-        mpirun -np 1 --bind-to none "$HST_EXE" "$dir/hst.in" >"$dir/hst.out" 2>&1
+        --chdir="$dir" \
+        mpirun -np 1 --bind-to none "$HST_EXE" hst.in >"$dir/hst.out" 2>&1
     local rc=$?
     if (( rc == 0 )); then
         echo "$dir finished successfully"
@@ -66,7 +76,8 @@ run_sim() {
 }
 
 pids=()
-for dir in sim1 sim2 sim3 sim4; do
+for i in 1 2 3 4; do
+    dir="$CASE_ROOT/sim$i"
     run_sim "$dir" &
     pids+=("$!")
 done
