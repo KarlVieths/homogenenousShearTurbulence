@@ -41,11 +41,15 @@ names and the meaning of the two transverse velocity slots change.  That is why
 an old-CPL file needs no transpose when re-read: file dim1 (spanwise) already
 maps to the new `z` axis and file dim2 (shear) to the new `y` axis.
 
-## 3. The mapping the readers apply (already in the code)
+## 3. The mapping the readers apply
 
 **Fortran** — `src/hst_io.f90::restart_read`:
-- Mesh validation: deck tuple `(nx, nz, ny+1)` must equal file `(nx, ny_cpl,
-  nz_cpl)` — the reader aborts if not.
+ - Mesh compatibility: the reader accepts differing resolutions.  The deck
+  tuple `(nx, nz, ny+1)` corresponds to file `(nx, ny_cpl, nz_cpl)`; common
+  signed Fourier indices are copied and absent target modes remain zero.
+  The physical box must be unchanged (in particular `ly`; `ly` is not stored
+  in the legacy CPL header), and the Fourier fundamentals `alpha0` and
+  `beta0` must match.
 - `CPL_ORDER = [1, 3, 2]`; the copy loop
   `V(iy, iz, ix, CPL_ORDER) = buf(:, iy, iz, ix)` sends CPL component 1 (old
   spanwise v) to the new `w` slot and CPL component 2 (old shear w) to the new
@@ -58,7 +62,10 @@ maps to the new `z` axis and file dim2 (shear) to the new `y` axis.
 - `vel = (u, v, w)` with `v = CPL comp2 (w_cpl, shear)`, `w = CPL comp1
   (v_cpl, spanwise)` — the same swap.
 
-Both implement exactly the mapping required by section 1.
+The Fortran reader additionally maps each target `y(iy)` to the nearest source
+row on the source uniform grid.  A stretched target grid is therefore also
+supported.  Both readers implement the component mapping required by section
+1; the resampling operation is specific to the Fortran restart reader.
 
 ## 4. Verification result (run/Dati.cart.in.Re2000, deck run/hst.in)
 
@@ -91,10 +98,13 @@ PASSED: convention conversion verified (no change to restart bytes)
 
 `Dati.cart.in.Re2000` is already stored in the convention-neutral CPL layout
 and the shipped readers (`src/hst_io.f90::restart_read` and
-`post/python/io.py::read_field`) already map its axes and swap its velocity
-components into the new hst convention correctly.  **No rewrite of the restart
-file is required** — changing the file's bytes would make the reader double-apply
-the swap and corrupt the field.
+`post/python/io.py::read_field`) map its axes and swap its velocity components
+into the new hst convention correctly.  **No rewrite of the restart file is
+required** — changing the file's bytes would make the reader double-apply the
+swap and corrupt the field.  `restart_read` now also supports resolution
+changes using the simple Fourier-copy/nearest-neighbour strategy described
+above.  Increasing resolution zero-pads new Fourier modes; decreasing it
+truncates modes outside the target range.
 
 The verification test added to the repo (`tests/verify_restart_convention.py`)
 is the executable record of these checks.

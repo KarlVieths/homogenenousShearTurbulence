@@ -56,18 +56,24 @@ contains
   end subroutine make_output_dirs
 
   ! Reads filename into V, or generates the initial field when it is absent.
-  ! With time_from_restart the clock is taken from the file.
+  ! With time_from_restart the clock is taken from the file.  A restart may
+  ! have a different resolution: x and z are Fourier indices, so only modes
+  ! present in both fields are copied; y is resampled by nearest neighbour in
+  ! physical space.  The source CPL field is read only for the x slab needed
+  ! by this rank, so this does not require a global-sized temporary array.
   subroutine restart_read(filename)
     character(len=*), intent(in) :: filename
     integer :: io, ierr, unit, p
     character(len=4096) :: head
-    integer(C_INT) :: r_nx, r_ny, r_nz
+    integer(C_INT) :: r_nx, r_ny, r_nz, source_ny
     real(C_DOUBLE) :: r_alfa0, r_beta0, r_re, r_time, r_S
     integer(MPI_OFFSET_KIND) :: disp
     type(MPI_File) :: fh
     type(MPI_Datatype) :: view
     complex(C_DOUBLE_COMPLEX), allocatable :: buf(:, :, :, :)
-    integer(C_INT) :: ix, iy, iz
+    integer(C_INT) :: ix, iy, iz, src_iy
+    integer :: sx0, sx1, sxB, source_zB
+    real(C_DOUBLE) :: source_dy, target_y
 
     open (newunit=unit, file=trim(filename), access='stream', status='old', action='read', iostat=io)
     if (io /= 0) then
@@ -93,31 +99,61 @@ contains
     p = index(head, 'time='//LF); read (unit, pos=p + 6) r_time
     p = index(head, LF//'S='//LF); read (unit, pos=p + 4) r_S
     close (unit)
-    if (r_nx /= nx .or. r_ny /= nz .or. r_nz /= ny + 1) then
-      if (has_terminal) then
-        print *, 'ERROR: mesh in '//trim(filename)//' does not match the deck'
-        print *, '   file (CPL names nx ny nz): ', r_nx, r_ny, r_nz
-        print *, '   deck (nx, nz, ny+1):       ', nx, nz, ny + 1
-      end if
+    source_ny = r_nz - 1
+    if (r_nx < 0 .or. r_ny < 0 .or. source_ny < 1) then
+      if (has_terminal) print *, 'ERROR: invalid mesh dimensions in '//trim(filename)
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
     end if
-    if (has_terminal .and. (abs(r_alfa0 - alfa0) > 1.0d-4*alfa0 .or. abs(r_beta0 - beta0) > 1.0d-4*beta0)) &
-      print *, '   note: alpha0/beta0 in the file differ from the deck:', r_alfa0, r_beta0
+    if (has_terminal .and. (r_nx /= nx .or. r_ny /= nz .or. source_ny /= ny)) then
+      print *, '   interpolating restart mesh: file (nx, nz, ny) = ', r_nx, r_ny, source_ny
+      print *, '                              deck (nx, nz, ny) = ', nx, nz, ny
+    end if
+    if (abs(r_alfa0 - alfa0) > 1.0d-4*max(abs(alfa0), 1.0d0) .or. &
+        abs(r_beta0 - beta0) > 1.0d-4*max(abs(beta0), 1.0d0)) then
+      if (has_terminal) print *, 'ERROR: restart alpha0/beta0 do not match the deck:', r_alfa0, r_beta0, alfa0, beta0
+      call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+    end if
     if (has_terminal .and. (abs(r_re - re) > 1.0d-9*re .or. r_S /= S)) &
       print *, '   note: Re or S differ from the file (', r_re, r_S, ')'
     if (time_from_restart) time = r_time
 
-    allocate (buf(3, ny0:nyN, -nz:nz, nx0:nxN))
-    view = cpl_view(3, ny0, nyN)
+    ! The source file stores x=0..r_nx, z=-r_ny..r_ny and interior shear
+    ! rows 0..source_ny-1 at file rows 2..r_nz.  Read the intersection of
+    ! this rank's x slab and the source x range.  The other ranks still join
+    ! the collective read with a zero-length operation.
+    sx0 = max(int(nx0), 0)
+    sx1 = min(int(nxN), int(r_nx))
+    sxB = max(0, sx1 - sx0 + 1)
+    source_zB = 2*int(r_ny) + 1
     call MPI_File_open(MPI_COMM_WORLD, trim(filename), MPI_MODE_RDONLY, MPI_INFO_NULL, fh, ierr)
-    call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, view, 'native', MPI_INFO_NULL, ierr)
-    call MPI_File_read_all(fh, buf, size(buf), MPI_DOUBLE_COMPLEX, MPI_STATUS_IGNORE, ierr)
+    if (sxB > 0) then
+      allocate (buf(3, 0:source_ny-1, -r_ny:r_ny, sx0:sx1))
+      call MPI_Type_create_subarray(4, [3, int(r_nz)+3, source_zB, int(r_nx)+1], &
+                                    [3, int(source_ny), source_zB, sxB], [0, 2, 0, sx0], &
+                                    MPI_ORDER_FORTRAN, MPI_DOUBLE_COMPLEX, view, ierr)
+      call MPI_Type_commit(view, ierr)
+      call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, view, 'native', MPI_INFO_NULL, ierr)
+      call MPI_File_read_all(fh, buf, size(buf), MPI_DOUBLE_COMPLEX, MPI_STATUS_IGNORE, ierr)
+      call MPI_Type_free(view, ierr)
+    else
+      allocate (buf(3, 1, 1, 1))
+      call MPI_File_set_view(fh, disp, MPI_DOUBLE_COMPLEX, MPI_DOUBLE_COMPLEX, 'native', MPI_INFO_NULL, ierr)
+      call MPI_File_read_all(fh, buf, 0, MPI_DOUBLE_COMPLEX, MPI_STATUS_IGNORE, ierr)
+    end if
     call MPI_File_close(fh, ierr)
-    call MPI_Type_free(view, ierr)
+
+    ! The old CPL shear grid is uniform, irrespective of the target grid's
+    ! optional stretching.  Use coordinates, not a ratio of array indices,
+    ! and wrap the endpoint periodically before selecting the nearest row.
+    source_dy = ly/real(source_ny, C_DOUBLE)
     do ix = nx0, nxN
-      do iz = -nz, nz
+      if (ix < sx0 .or. ix > sx1) cycle
+      do iz = max(-nz, -r_ny), min(nz, r_ny)
         do iy = ny0, nyN
-          V(iy, iz, ix, CPL_ORDER) = buf(:, iy, iz, ix)
+          target_y = modulo(y(iy), ly)
+          src_iy = nint(target_y/source_dy)
+          if (src_iy == source_ny) src_iy = 0
+          V(iy, iz, ix, CPL_ORDER) = buf(:, src_iy, iz, ix)
         end do
       end do
     end do
