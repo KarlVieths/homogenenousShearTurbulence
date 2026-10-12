@@ -50,12 +50,16 @@ module hst_params
   integer(C_SIZE_T), save :: nstep, istep = 0, ifield = 0
   logical, save :: time_from_restart          ! if .true., adopt the clock from the restart file header
   logical, save :: restart_from_file          ! if .true., start from restart_file (else generate initial field)
+  character(len=16), save :: restart_remap    ! 'strict' or 'mode_index'
   character(len=256), save :: restart_file    ! input field to read at start-up (hst_io); output is always Dati.cart.out
   logical, save :: timing                     ! per-phase timer (hst_timer)
 
   !------------------------------------------------------ initial field ----
   real(C_DOUBLE), save :: amplitude, kpeak
   integer(C_INT), save :: seed
+  character(len=16), save :: initial_condition
+  real(C_DOUBLE), save :: tg_amplitude
+  integer(C_INT), save :: tg_mode
 
   !-------------------------------------------------------- rank layout ----
   ! nproc = npxz*npy ranks: npxz x-z pencils (ipxz) times npy y slabs

@@ -19,8 +19,8 @@ contains
     namelist /mesh/ nx, ny, nz, alfa0, beta0, ly, ystretch, line_chunk, transport, npy
     namelist /physics/ re, S, linear, exact_shift, s2_amplitude, s2_period, s2_start, &
       sl_amplitude, sl_period, sl_delta, sl_start, sl_bodyforce, sl_ramp
-    namelist /time_control/ deltat, cflmax, t_max, nstep, wall_max, dt_stat, dt_field, dt_save, time, time_from_restart, restart_from_file, restart_file, timing
-    namelist /init/ amplitude, seed, kpeak
+    namelist /time_control/ deltat, cflmax, t_max, nstep, wall_max, dt_stat, dt_field, dt_save, time, time_from_restart, restart_from_file, restart_remap, restart_file, timing
+    namelist /init/ initial_condition, amplitude, seed, kpeak, tg_amplitude, tg_mode
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
@@ -32,8 +32,11 @@ contains
     dt_stat = 0.01d0; dt_field = 10.0d0; dt_save = 10.0d0
     time = 0.0d0; time_from_restart = .false.; timing = .false.
     restart_from_file = .true.          ! preserve default behaviour: always try to read restart_file
+    restart_remap = 'strict'
     restart_file = 'Dati.cart.out'
+    initial_condition = 'random'
     amplitude = 1.0d-3; seed = 1; kpeak = 4.0d0
+    tg_amplitude = 1.0d0; tg_mode = 1
 
     open (newunit=unit, file=filename, status='old', action='read', iostat=ios)
     if (ios /= 0) then
@@ -49,12 +52,24 @@ contains
       print *, 'ERROR: transport must be auto, mpi or nccl'
       error stop 1
     end if
+    if (trim(restart_remap) /= 'strict' .and. trim(restart_remap) /= 'mode_index') then
+      print *, "ERROR: restart_remap must be 'strict' or 'mode_index'"
+      error stop 1
+    end if
     if (sl_amplitude /= 0.0d0 .and. s2_amplitude /= 0.0d0) then
       print *, 'ERROR: the Stokes layer and the spanwise shear S2 cannot both be active (as in hst-main)'
       error stop 1
     end if
     if (sl_amplitude /= 0.0d0 .and. sl_period <= 0.0d0) then
       print *, 'ERROR: sl_period must be positive'
+      error stop 1
+    end if
+    if (trim(initial_condition) /= 'random' .and. trim(initial_condition) /= 'taylor_green') then
+      print *, "ERROR: initial_condition must be 'random' or 'taylor_green'"
+      error stop 1
+    end if
+    if (tg_mode < 1) then
+      print *, 'ERROR: tg_mode must be positive'
       error stop 1
     end if
 
@@ -105,9 +120,12 @@ contains
     write (*, '(A,I10,A,F10.0,A,L1,A,L1,A,A)') '   nstep =', nstep, '   wall_max =', wall_max, &
       '   restart_from_file = ', restart_from_file, '   time_from_restart = ', &
       time_from_restart, &
-      '   restart_file = ', trim(restart_file)
+       '   restart_file = ', trim(restart_file)
+    write (*, '(A,A)') '   restart_remap = ', trim(restart_remap)
     write (*, '(A,L1)') '   timing = ', timing
     write (*, '(A,ES10.3,A,I6,A,F8.3)') '   amplitude=', amplitude, '   seed =', seed, '   kpeak =', kpeak
+    write (*, '(A,A,A,ES10.3,A,I0)') '   initial_condition=', trim(initial_condition), &
+      '   tg_amplitude=', tg_amplitude, '   tg_mode=', tg_mode
     write (*, '(A)') ' '
   end subroutine print_input
 

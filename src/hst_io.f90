@@ -37,7 +37,7 @@ module hst_io
   use mpi_f08
   use hst_params
   use hst_initial, only: generate_initial_field
-  use hst_derivatives, only: s2_of, gamma_y_of
+  use hst_derivatives, only: s2_of, gamma_y_of, fill_ghosts
 
   implicit none
   private
@@ -57,10 +57,10 @@ contains
 
   ! Reads filename into V, or generates the initial field when it is absent.
   ! With time_from_restart the clock is taken from the file.  A restart may
-  ! have a different resolution: x and z are Fourier indices, so only modes
-  ! present in both fields are copied; y is resampled by nearest neighbour in
-  ! physical space.  The source CPL field is read only for the x slab needed
-  ! by this rank, so this does not require a global-sized temporary array.
+  ! have a different resolution when restart_remap='mode_index': x and z are
+  ! Fourier indices, so only modes present in both fields are copied; y is
+  ! resampled by nearest neighbour in physical space.  The source CPL field
+  ! is read only for the x slab needed by this rank.
   subroutine restart_read(filename)
     character(len=*), intent(in) :: filename
     integer :: io, ierr, unit, p
@@ -110,8 +110,12 @@ contains
     end if
     if (abs(r_alfa0 - alfa0) > 1.0d-4*max(abs(alfa0), 1.0d0) .or. &
         abs(r_beta0 - beta0) > 1.0d-4*max(abs(beta0), 1.0d0)) then
+      if (trim(restart_remap) == 'mode_index') then
+        if (has_terminal) print *, '   restart_remap=mode_index: remapping signed Fourier indices and projecting on target wavenumbers'
+      else
       if (has_terminal) print *, 'ERROR: restart alpha0/beta0 do not match the deck:', r_alfa0, r_beta0, alfa0, beta0
       call MPI_Abort(MPI_COMM_WORLD, 1, ierr)
+      end if
     end if
     if (has_terminal .and. (abs(r_re - re) > 1.0d-9*re .or. r_S /= S)) &
       print *, '   note: Re or S differ from the file (', r_re, r_S, ')'
@@ -158,7 +162,56 @@ contains
       end do
     end do
     deallocate (buf)
+    if (trim(restart_remap) == 'mode_index') then
+      ! The host copy is now complete.  Ghost rows must be made with the
+      ! target wavenumbers before the discrete divergence is evaluated.
+      !$omp target update to(V)
+      call fill_ghosts(1, 3)
+      call fill_ghosts(2)
+      call project_restart()
+    end if
   end subroutine restart_read
+
+  ! Enforce the target-grid discrete divergence constraint after a mode-index
+  ! remap.  In the D0-weighted compact scheme the constraint is
+  !   i*alfa*u + D1*v + i*beta*w = 0.
+  ! For each mode we change only one component, avoiding a singular division
+  ! at (alfa,beta)=(0,0).  This is intentionally a remap repair, not a general
+  ! pressure projection: the source field is already close to divergence free.
+  subroutine project_restart()
+    integer(C_INT) :: ix, iz, iy, j
+    complex(C_DOUBLE_COMPLEX) :: div, du, dv, dw
+    !$omp target teams distribute parallel do collapse(3) default(none) &
+    !$omp shared(V, der, ialfa, ibeta, nx0, nxN, nz, ny0, nyN) &
+    !$omp private(ix, iz, iy, j, div, du, dv, dw)
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        do iy = ny0, nyN
+          dv = 0.0d0
+          du = 0.0d0
+          dw = 0.0d0
+          do j = -2, 2
+            du = du + der(iy, 0, j)*V(iy + j, iz, ix, 1)
+            dv = dv + der(iy, 1, j)*V(iy + j, iz, ix, 2)
+            dw = dw + der(iy, 0, j)*V(iy + j, iz, ix, 3)
+          end do
+          if (ix /= 0) then
+            div = dv + ibeta(iz)*dw + ialfa(ix)*du
+            V(iy, iz, ix, 1) = V(iy, iz, ix, 1) - div/ialfa(ix)
+          else if (iz /= 0) then
+            div = dv + ibeta(iz)*dw
+            V(iy, iz, ix, 3) = V(iy, iz, ix, 3) - div/ibeta(iz)
+          else
+            ! At the mean mode incompressibility only requires D1*v=0.
+            V(iy, iz, ix, 2) = 0.0d0
+          end if
+        end do
+      end do
+    end do
+    !$omp target update from(V)
+    call fill_ghosts(1, 3)
+    call fill_ghosts(2)
+  end subroutine project_restart
 
   ! Number after `key` in the text header.
   real(C_DOUBLE) function header_value(head, key)
