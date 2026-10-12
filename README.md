@@ -81,7 +81,33 @@ If the field named by `restart_file` in `&time_control` exists (default
 too); a field written by the CPL code works as well.  Point `restart_file`
 at any CPL-format velocity field (e.g. `Dati.cart.in.Re2000`) to start from
 it instead; the code always writes its live checkpoint to `Dati.cart.out`.
-Otherwise a seeded, divergence-free random field is generated (`&init`).
+Otherwise a seeded, divergence-free random field is generated (`&init`).  A
+Taylor--Green vortex is also available as a deterministic initial condition:
+set `restart_from_file = .false.` in `&time_control` and use, for example,
+
+Restart remapping is strict by default: a restart with different Fourier
+fundamentals is rejected.  To explicitly preserve signed Fourier mode indices
+when changing `alfa0` and/or `beta0`, set `restart_remap = 'mode_index'` in
+`&time_control`.  Modes outside the target resolution are truncated and new
+modes are zero; the target shear-periodic ghost rows are regenerated and the
+field is projected onto the target-grid compact incompressibility constraint.
+This policy preserves mode indices, not physical wavenumbers, and does not
+remap `ly`.
+
+```fortran
+&init
+  initial_condition = 'taylor_green'
+  tg_amplitude = 1.0
+  tg_mode = 1
+/
+```
+
+The Taylor--Green option uses
+`u = A sin(kx) cos(ky) cos(kz)`,
+`v = -A cos(kx) sin(ky) cos(kz)`, and `w = 0`.  It requires equal
+fundamental wavenumbers (`alfa0 = beta0 = 2*pi/ly`) and uses `tg_mode` in
+all three directions.  The existing `initial_condition = 'random'` default
+is unchanged.
 
 A production run goes in segments: `wall_max` in `&time_control` (seconds
 of wall-clock time, 0 = none) ends the run cleanly with its restart file,
