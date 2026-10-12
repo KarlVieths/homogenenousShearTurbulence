@@ -25,6 +25,7 @@ STRING vel_fld_name, press_fld_name
 STRING path_to_fields=WRITE(path_name'fields/')
 STRING path_to_pfields=WRITE(path_name'p_fields/')
 STRING path_to_statistics=WRITE(path_name'statistics/')
+STRING path_to_vtks=WRITE(path_name"vtks/")
 ! STRING filename_out,field_name,pfield_name
 ! FILE out
 

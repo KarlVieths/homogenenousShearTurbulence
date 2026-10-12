@@ -79,6 +79,7 @@ postprocess
 
 # run directory
 run/
+run-taylor_green/
 
 # additional test directories
 test_*/

@@ -2,7 +2,8 @@
 
 # Post-process one HST case.  The only case-specific values normally needing
 # changes are in this block (or DATA_DIR can be supplied as the first argument).
-DATA_DIR="/home/ws/th5982/research/codes/homogenenousShearTurbulence/run"
+# DATA_DIR="/home/ws/th5982/research/codes/homogenenousShearTurbulence/run"
+DATA_DIR=/home/ws/th5982/research/codes/homogenenousShearTurbulence/run-taylor_green
 NF_MIN=1
 NF_MAX=10
 DN=1

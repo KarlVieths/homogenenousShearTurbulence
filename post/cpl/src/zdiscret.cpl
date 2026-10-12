@@ -1,6 +1,7 @@
 ! Define wall-normal mesh
 ! For htcoeff>0 non-uniform grid: higher density at half box
-REAL CONSTANT zmin=0, zmax=2
+REAL CONSTANT zmin=0
+REAL zmax=lz
 REAL CONSTANT Lz=zmax-zmin
 REAL z(-1..nz+1)
 REAL z0

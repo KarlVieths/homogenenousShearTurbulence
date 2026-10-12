@@ -30,7 +30,7 @@ INTEGER nx, ny, nz
 
 ! ---- Runtime scalars (kept as non-CONSTANT globals so the renamed new-deck
 !      tokens can be mapped onto the legacy names the downstream modules use) --
-REAL alpha0, beta0, htcoeff, Re
+REAL alpha0, beta0, lz, htcoeff, Re
 REAL S
 REAL A, T, delta_SL, t0_SL, dt_rise
 REAL deltat
@@ -54,8 +54,9 @@ STRING restart_file       ! &time_control restart_file -> Vfield
 STRING sim_input=WRITE("readinput.in")
 
 FILE data=OPENRO[IF COMMANDLINE.HI>1 THEN COMMANDLINE(2) ELSE sim_input]
-  ! &mesh port ...: nx, ny, nz (CLP convention), then alfa0, beta0, ystretch
-  READ BY NAME FROM data nx, ny, nz, alfa0, beta0, ystretch
+  ! &mesh port ...: nx, ny, nz (CPL convention), then alfa0, beta0, lz,
+  !                  and ystretch.  Fortran ly is CPL lz after the axis relabel.
+  READ BY NAME FROM data nx, ny, nz, alfa0, beta0, lz, ystretch
   ! &physics ...: re, S, s2_amplitude, s2_period, s2_start, ...
   READ BY NAME FROM data re, S, s2_amplitude, s2_period, s2_start
   ! &time_control ...: deltat, cflmax, t_max, dt_stat, dt_field, dt_save,
@@ -82,6 +83,10 @@ IF ny<0 THEN
 END IF
 IF nz<=1 THEN
   WRITE "ERROR: nz must be greater than 1"
+  STOP
+END IF
+IF lz<=0 THEN
+  WRITE "ERROR: lz must be positive"
   STOP
 END IF
 

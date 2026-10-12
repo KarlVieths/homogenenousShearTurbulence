@@ -36,6 +36,9 @@ USE src/mod_rey_decomp
 #ifdef compute_budget
     USE src/mod_compute_budget
 #endif
+#ifdef convert_to_vtk
+    USE src/mod_fld2vtk
+#endif
 
 #ifdef compute_pressure
     LOOP FOR nf = nstart TO nend
@@ -76,6 +79,12 @@ LOOP FOR nf = nstart TO nend
     read_press_field(press_fld_name)
     ! Accumulate mean values
     accum_means()
+    #ifdef convert_to_vtk
+        ! convert *.fld to *.vtk (Paraview-compatible)
+        vtk_name = WRITE(path_to_vtks"field"nf".vtk")
+        WRITE vel_fld_name" --> "vtk_name
+        fld2vtk()
+    #endif
 REPEAT LOOP
 mpi_comm_means()
 MPI_Barrier(MPI_COMM_WORLD)

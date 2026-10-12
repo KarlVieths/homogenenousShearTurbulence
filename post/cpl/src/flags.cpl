@@ -1,4 +1,5 @@
 ! POSTPRO FLAGS
-#define compute_variances
+! #define compute_variances
 ! #define compute_pressure
 ! #define compute_budget
+#define convert_to_vtk

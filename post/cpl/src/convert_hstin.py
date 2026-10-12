@@ -40,6 +40,8 @@ BOOL = {'.true.': 'YES', '.false.': 'NO', 'true': 'YES', 'false': 'NO',
 TOKENS = [
     ('alfa0',            'alfa0',          'mesh'),
     ('beta0',            'beta0',          'mesh'),
+    # Fortran's y/shear direction is CPL's z direction.
+    ('lz',               'ly',             'mesh'),
     ('ystretch',         'ystretch',       'mesh'),
     ('re',               're',             'physics'),
     ('S',                'S',              'physics'),
