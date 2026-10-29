@@ -170,6 +170,7 @@ class Config:
     linear: bool = False
     # time control
     deltat: float = 0.0
+    dt_stat: float = 0.01
     dt_field: float = 10.0
     dt_save: float = 10.0
     time: float = 0.0

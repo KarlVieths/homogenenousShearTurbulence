@@ -193,6 +193,20 @@ def read_pressure(path: str | Path, cfg=None, ref_field: Field | None = None,
     return p[2:2 + ny_hst]             # interior rows (file rows 2..ny+1)
 
 
+# gfortran drops the "E" of three-digit exponents (1.2E-100 is written "1.2-100"),
+# which happens when a quantity decays towards zero (e.g. a relaminarized run).
+_MISSING_EXPONENT_E = re.compile(r"(?<=\d)([+-]\d{3})(?=\s|$)", re.M)
+
+
+def read_text_repaired(path: str | Path) -> str:
+    """Return the text of an ASCII statistics file with dropped exponent letters restored."""
+    return _MISSING_EXPONENT_E.sub(r"E\1", Path(path).read_text())
+
+
+def _loadtxt(path: str | Path):
+    return np.atleast_2d(np.loadtxt(read_text_repaired(path).splitlines(), comments="#")).astype(float)
+
+
 def read_runtimedata(path: str | Path):
     """Read ``Runtimedata``: one line per ``dt_stat``, the 13 columns.
 
@@ -211,7 +225,7 @@ def read_runtimedata(path: str | Path):
     names = ("time", "meanflowx", "meanflowy", "S", "S2",
              "gamma_x", "gamma_y", "deltat", "cfl_dt",
              "energy", "diss", "uv", "vw")
-    data = np.atleast_2d(np.loadtxt(Path(path), comments="#")).astype(float)
+    data = _loadtxt(path)
     if data.shape[1] == len(names):
         return data.view(dtype=[(n, float) for n in names]).reshape(-1)
     return data
@@ -227,7 +241,7 @@ def read_variances(path: str | Path):
     ``Runtimedata``).
     """
     names = ("time", "uu", "vv", "ww", "uw")
-    data = np.atleast_2d(np.loadtxt(Path(path), comments="#")).astype(float)
+    data = _loadtxt(path)
     if data.shape[1] == len(names):
         return data.view(dtype=[(n, float) for n in names]).reshape(-1)
     return data
@@ -236,7 +250,7 @@ def read_variances(path: str | Path):
 def read_stokes_runtime(path: str | Path):
     """Read ``stokes_runtime.dat``: ``time, energy_out, energy_in, diss_out, diss_in``."""
     names = ("time", "energy_out", "energy_in", "diss_out", "diss_in")
-    data = np.atleast_2d(np.loadtxt(Path(path), comments="#")).astype(float)
+    data = _loadtxt(path)
     if data.shape[1] == len(names):
         return data.view(dtype=[(n, float) for n in names]).reshape(-1)
     return data

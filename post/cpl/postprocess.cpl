@@ -7,7 +7,7 @@
 fedisableexcept(FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO)
 
 ! run-time bounds checking (high impact on performance)
-USE rtchecks
+! USE rtchecks
 
 ! compile-time flags (physics- and numerics-related options)
 USE src/flags
