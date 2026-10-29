@@ -70,12 +70,14 @@ Testing/
 # python bytecode source files
 *.pyc
 */__pycache__/
+.venv*
 
 # cpl build directories
 *.cpl/
 
 # cpl executables
 postprocess
+meanandvar
 
 # run directory
 run/
@@ -83,3 +85,5 @@ run-taylor_green/
 
 # additional test directories
 test_*/
+*.pdf
+*.dat

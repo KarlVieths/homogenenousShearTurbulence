@@ -11,10 +11,12 @@ locally inside ``run`` so the base package stays importable with only numpy.
 
 from . import plot_stats
 from . import slices
+from . import export_statistics
 
 TOOLS = {
     "plot_stats": plot_stats,
     "slices": slices,
+    "export_statistics": export_statistics,
 }
 
-__all__ = ["TOOLS", "plot_stats", "slices"]
+__all__ = ["TOOLS", "plot_stats", "slices", "export_statistics"]
