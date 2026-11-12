@@ -89,3 +89,4 @@ test_*/
 *.dat
 plot_runtimedata.ipynb
 compile-test_istm.sh
+compile-horeka2.sh

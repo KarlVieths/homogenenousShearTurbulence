@@ -1,12 +1,16 @@
 # Environment for HoreKA2 (KIT), the EasyBuild/Lmod software stack that
 # replaces HoreKA (env/horeka.sh).
-# Usage:  source env/horeka2.sh gpu    then   make GPU=1 GPU_ARCH=ccXX NCCL=1
-#         source env/horeka2.sh cpu    then   make
+# Usage:  source env/horeka2.sh gpu [h100|h200|b200]    then   make GPU=1 NCCL=1
+#         source env/horeka2.sh cpu                     then   make
 #
-# GPU_ARCH is detected with nvidia-smi when the script is sourced on a GPU node
-# (an `export GPU_ARCH=...` made beforehand is kept).  On a login node without
-# GPUs it stays unset: export it or pass it to make yourself (cc80 A100,
-# cc90 H100, cc100 B200, ...).
+# HoreKA2 has H100 and H200 (both cc90) and B200 (cc100) GPUs, no A100.
+# GPU_ARCH, in order of precedence:
+#   1. the device name given as second argument (use it on a login node, where
+#      nvidia-smi sees no GPU), e.g.  source env/horeka2.sh gpu b200
+#   2. an `export GPU_ARCH=...` made beforehand
+#   3. detection with nvidia-smi when sourced on a GPU node
+# Binaries are per architecture: keep them apart with BUILD, e.g.
+#   source env/horeka2.sh gpu b200;  make GPU=1 NCCL=1 BUILD=build-b200
 #
 # Module versions can be overridden when sourcing, e.g.
 #   HST_NVHPC_MODULE=nvidia-compilers/26.5-CUDA-13.2.0 source env/horeka2.sh gpu
@@ -24,6 +28,14 @@ HST_CPU_MODULES=${HST_CPU_MODULES:-"GCC/13.3.0 OpenMPI/5.0.3-GCC-13.3.0 FFTW/3.3
 
 case "${1:-gpu}" in
   gpu)
+    # Checked before anything is purged or loaded, so a typo changes nothing.
+    _hst_dev=${2:-}; _hst_dev=${_hst_dev,,}
+    case "$_hst_dev" in
+      "")         ;;
+      h100|h200)  GPU_ARCH=cc90 ;;
+      b200)       GPU_ARCH=cc100 ;;
+      *)          echo "horeka2.sh: unknown device '$2' (h100, h200 or b200)" >&2; return 1 ;;
+    esac
     module purge
     module load $HST_NVHPC_MODULE || return 1
 
@@ -52,14 +64,12 @@ case "${1:-gpu}" in
       _hst_cc=$(nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | head -n1 | tr -d '. \r')
       [ -n "$_hst_cc" ] && GPU_ARCH=cc$_hst_cc
     fi
-    # Exported so that make sees it (also when it was only given as a prefix
-    # assignment to `source`).  Left unset on purpose when it cannot be
-    # detected: make would then pick its own default (cc86), which is wrong
-    # for every GPU here.
+    # Left unset on purpose when it cannot be determined: make would then pick
+    # its own default (cc86), which is wrong for every GPU here.
     if [ -n "${GPU_ARCH:-}" ]; then
       export GPU_ARCH
     else
-      echo "horeka2.sh: GPU_ARCH not set and no GPU visible; pass make GPU_ARCH=ccXX" >&2
+      echo "horeka2.sh: GPU_ARCH not set and no GPU visible; use 'source env/horeka2.sh gpu h100|h200|b200' or make GPU_ARCH=cc90|cc100" >&2
     fi
     ;;
   cpu)
@@ -76,8 +86,8 @@ case "${1:-gpu}" in
     fi
     ;;
   *)
-    echo "usage: source env/horeka2.sh [gpu|cpu]" >&2
+    echo "usage: source env/horeka2.sh [gpu [h100|h200|b200] | cpu]" >&2
     return 1
     ;;
 esac
-unset _hst_nvf _hst_d _hst_cc
+unset _hst_dev _hst_nvf _hst_d _hst_cc
