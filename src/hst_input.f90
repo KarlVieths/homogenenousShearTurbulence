@@ -21,7 +21,8 @@ contains
       sl_amplitude, sl_period, sl_delta, sl_start, sl_bodyforce, sl_ramp
     namelist /time_control/ deltat, cflmax, t_max, nstep, wall_max, dt_stat, dt_field, dt_save, time, time_from_restart, restart_from_file, restart_remap, restart_file, timing
     namelist /init/ initial_condition, amplitude, seed, kpeak, tg_amplitude, tg_mode
-    namelist /damping/ damp_kpar, damp_kperp, damp_rate, damp_hard, damp_edge, damp_norm, damp_mean, damp_follow, damp_angle
+    namelist /damping/ damp_kpar, damp_kperp, damp_rate, damp_hard, damp_edge, damp_norm, damp_mean, damp_follow, damp_angle, &
+      damp_rw, damp_delta
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
@@ -39,6 +40,7 @@ contains
     amplitude = 1.0d-3; seed = 1; kpeak = 4.0d0
     damp_kpar = 0.0d0; damp_kperp = 0.0d0; damp_rate = 0.0d0; damp_hard = .false.; damp_edge = 0.0d0
     damp_norm = 2.0d0; damp_mean = .false.; damp_follow = .true.; damp_angle = 0.0d0
+    damp_rw = 1.0d0; damp_delta = 0.0d0
     tg_amplitude = 1.0d0; tg_mode = 1
 
     open (newunit=unit, file=filename, status='old', action='read', iostat=ios)
@@ -79,6 +81,26 @@ contains
     if (damp_norm < 1.0d0 .or. damp_edge < 0.0d0 .or. damp_edge >= 1.0d0 .or. damp_rate < 0.0d0) then
       print *, 'ERROR: damping needs damp_norm >= 1, 0 <= damp_edge < 1, damp_rate >= 0'
       error stop 1
+    end if
+    if (damp_rw < 1.0d0 .or. damp_delta < 0.0d0 .or. damp_delta >= 1.0d0) then
+      print *, 'ERROR: damping needs damp_rw >= 1 and 0 <= damp_delta < 1'
+      error stop 1
+    end if
+    if (damp_delta > 0.0d0 .and. damp_rw <= 1.0d0) then
+      print *, 'ERROR: damp_delta > 0 only acts together with damp_rw > 1 (wide-strip mask)'
+      error stop 1
+    end if
+    if (damp_rw > 1.0d0) then
+      ! the strip removal is a Galerkin truncation: defined for the hard mask only
+      if (damp_kpar <= 0.0d0) then
+        print *, 'ERROR: damp_rw > 1 needs the damping on (damp_kpar, damp_kperp > 0, damp_hard = .true.)'
+        error stop 1
+      end if
+      if (.not. damp_hard .or. damp_rate > 0.0d0 .or. damp_edge > 0.0d0) then
+        print *, 'ERROR: damp_rw > 1 (wide-strip mask) needs damp_hard = .true. with damp_rate = damp_edge = 0:'
+        print *, '       its combination with soft damping is not defined'
+        error stop 1
+      end if
     end if
     if (trim(initial_condition) /= 'random' .and. trim(initial_condition) /= 'taylor_green') then
       print *, "ERROR: initial_condition must be 'random' or 'taylor_green'"
@@ -134,6 +156,8 @@ contains
     if (damp_kpar > 0.0d0) write (*, '(A,F8.4,A,F8.4,A,F6.2,A,L1,A,F8.3,A,F6.3,A,L1,A,L1,A,F8.3)') &
       '   damping: k_par <', damp_kpar, '  k_perp <', damp_kperp, '  norm=', damp_norm, '  hard=', damp_hard, &
       '  rate=', damp_rate, '  edge=', damp_edge, '  mean=', damp_mean, '  follow=', damp_follow, '  angle=', damp_angle
+    if (damp_kpar > 0.0d0 .and. damp_rw > 1.0d0) write (*, '(A,F8.4,A,F8.4)') &
+      '   damping, wide-strip mask: rw=', damp_rw, '  delta=', damp_delta
     write (*, '(A,F10.6,A,F10.6,A,F10.3)') '   deltat=', deltat, '   cflmax=', cflmax, '   t_max =', t_max
     write (*, '(A,F10.4,A,F10.4,A,F10.4)') '   dt_stat=', dt_stat, '  dt_field=', dt_field, '  dt_save=', dt_save
     write (*, '(A,I10,A,F10.0,A,L1,A,L1,A,A)') '   nstep =', nstep, '   wall_max =', wall_max, &

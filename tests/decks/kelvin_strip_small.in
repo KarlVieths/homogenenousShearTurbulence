@@ -1,0 +1,7 @@
+! Wide-strip mask (T2c): the mode (1,1) = (3, 1/2) in units of the semi-axes (2 pi/3, 2 pi) is in the strip
+! |k_perp| < 2 pi but at r = 3.04 > rw = 2.5 (small scale): unchanged.
+&mesh  nx = 3, ny = 128, nz = 3, alfa0 = 6.283185307179586, beta0 = 3.141592653589793, ly = 2.0 /
+&physics  re = 2000.0, S = 1.0, linear = .true., exact_shift = .true. /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 1.0, nstep = 100000, dt_stat = 1.0, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&damping  damp_kpar = 2.0943951023931953, damp_kperp = 6.283185307179586, damp_hard = .true., damp_rw = 2.5 /

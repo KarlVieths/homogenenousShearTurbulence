@@ -64,10 +64,13 @@
 !&damping
 !  damp_kpar = 2.0943951023931953  damp_kperp = 6.283185307179586   ! semi-axes along / across the shear
 !  damp_norm = 2.0                 ! p: 2 = ellipse, large = rectangle; boundary modes (r = 1) are kept
-!  damp_hard = .false.             ! .true.: zero the columns every substep (Galerkin truncation)
-!  damp_rate = 1.0                 ! soft damping rate g inside (explicit: g*deltat < 1)
+!  damp_hard = .true.              ! .true.: zero the columns every substep (Galerkin truncation)
+!  damp_rate = 0.0                 ! soft damping rate g inside (explicit: g*deltat < 1)
 !  damp_edge = 0.0                 ! width in r of the smoothstep ramp of g to 0 at r = 1 (0 = step)
 !  damp_mean = .false.             ! damp the (0,0) column (mean profiles) too
-!  damp_follow = .true.            ! the region follows the shear direction atan2(S2(t), S); else damp_angle (deg)
+!  damp_follow = .false.           ! the region follows the shear direction atan2(S2(t), S); else damp_angle (deg)
 !  damp_angle = 0.0
+!  damp_rw = 2.25                  ! wide-strip mask (hard only): also remove |k_perp| < damp_kperp with r < damp_rw
+!                                  ! (1 = the plain ellipse; DAMPING.md section 5)
+!  damp_delta = 0.0                ! with damp_rw > 1: keep the sliver |k_perp| < damp_delta*damp_kperp (0 = none)
 !/

@@ -25,6 +25,21 @@
 !   time  theta_deg  ncol  energy_damped  power_damped
 !   (ly/2 <u_i u_i> over the damped columns and ly/2 <2 g u_i u_i>, the
 !   power the damping removes; zero for the hard mask)
+! damping_families.dat (hst_damping active; DAMPING.md section 5): the second moments of
+!   six overlapping families of columns, in the shear frame of the mask
+!   (e_par at the angle theta of damping_theta), as fractions of the fluctuation
+!   and per unit volume like variances_runtime.dat:
+!     time  theta_deg  share15  and per family  share  <u_par^2>  <v^2>  <u_perp^2>  -<u_par v>
+!   share15 = energy fraction at |k_h| < 1.5 damp_kperp (|k| Lz/2pi < 1.5 of the small box);
+!   the families (tol = half the smaller lattice spacing, kb = damp_kperp, ka = damp_kpar):
+!     1 mean         the (0,0) column (about the box mean)
+!     2 span_uniform |k_perp| < tol  (spanwise uniform: the Orr / burst columns)
+!     3 stream_unif. |k_par| < tol   (streamwise uniform)
+!     4 narrow       |k_perp| >= kb  (wavelength across the shear <= small-box Lz)
+!     5 strip_small  |k_perp| < kb and r >= damp_rw (the surviving small-scale strip)
+!     6 streaks      narrow and |k_par| < tol (the streaks of every length)
+!   Families 2, 3 overlap 4, 5 and 6: the shares do not add up to one.
+!   -<u_par v> = -(<u v> cos theta + <v w> sin theta) of the family's columns.
 ! statistics/spectra/exz<i>.dat (with every field snapshot): the column energies
 !   ix  iz  kx  kz  E  with E = ly/2 sum_y |u|^2 of the column (modes with
 !   ix > 0 counted twice, as in energy), averaged over the dt_stat samples
@@ -71,13 +86,16 @@ module hst_stats
   use hst_linsolve, only: line_solve, KIND_DY
   use hst_derivatives, only: s2_of, gamma_y_of
   use hst_stokes, only: stokes_active
-  use hst_damping, only: damping_active, damping_theta, damping_soft_factor, ncol_damped
+  use hst_damping, only: damping_active, damping_theta, damping_soft_factor, damping_radius, ncol_damped
 
   implicit none
   private
   public :: outstats, open_runtimedata, close_runtimedata, spectrum_write
 
-  integer, parameter :: unit_rt = 121, unit_var = 122, unit_sl = 123, unit_dp = 124
+  integer, parameter :: unit_rt = 121, unit_var = 122, unit_sl = 123, unit_dp = 124, unit_df = 125
+  integer, parameter :: NFAM = 6                      ! families of columns of damping_families.dat
+  real(C_DOUBLE), parameter :: FTOL = 1.0d-6          ! a column within FTOL of the strip edge / r = rw counts as on the boundary
+  real(C_DOUBLE), allocatable, save :: fcol(:, :, :)  ! per-column second moments (uu, vv, ww, uv, vw, uw): device scratch
   real(C_DOUBLE), allocatable, save :: exz(:, :), exz_acc(:, :)   ! column energies: device scratch, host sum
   integer, save :: nacc = 0
   real(C_DOUBLE), save :: t_acc0 = 0.0d0
@@ -91,6 +109,12 @@ contains
     if (has_terminal) open (unit=unit_var, file='statistics/variances_runtime.dat', action='write', position='append')
     if (has_terminal .and. stokes_active()) open (unit=unit_sl, file='statistics/stokes_runtime.dat', action='write', position='append')
     if (has_terminal .and. damping_active()) open (unit=unit_dp, file='statistics/damping_runtime.dat', action='write', position='append')
+    if (has_terminal .and. damping_active()) call open_families()
+    if (damping_active()) then
+      allocate (fcol(-nz:nz, nx0:nxN, 6))
+      fcol = 0.0d0
+      !$omp target enter data map(to: fcol)
+    end if
     allocate (exz(-nz:nz, nx0:nxN), exz_acc(-nz:nz, nx0:nxN))
     exz = 0.0d0; exz_acc = 0.0d0; nacc = 0; t_acc0 = time; mean_acc = 0.0d0
     !$omp target enter data map(to: exz)
@@ -101,9 +125,101 @@ contains
     if (has_terminal) close (unit_var)
     if (has_terminal .and. stokes_active()) close (unit_sl)
     if (has_terminal .and. damping_active()) close (unit_dp)
+    if (has_terminal .and. damping_active()) close (unit_df)
+    if (allocated(fcol)) then
+      !$omp target exit data map(delete: fcol)
+      deallocate (fcol)
+    end if
     !$omp target exit data map(delete: exz)
     deallocate (exz, exz_acc)
   end subroutine close_runtimedata
+
+  ! damping_families.dat: appended to; the header line only for a new file
+  subroutine open_families()
+    integer(C_SIZE_T) :: fsize
+    open (unit=unit_df, file='statistics/damping_families.dat', action='write', position='append')
+    inquire (unit=unit_df, size=fsize)
+    if (fsize <= 0) then
+      write (unit_df, '(A)') '# time theta_deg share15 | per family: share <u_par^2> <v^2> <u_perp^2> -<u_par v> | families: '// &
+        'mean span_uniform stream_uniform narrow strip_small streaks (DAMPING.md section 5, hst_stats.f90)'
+    end if
+  end subroutine open_families
+
+  ! Second moments of the six families (sums over the columns with the
+  ! y weights of outstats, not yet divided by ly): fam(:, f) = (uu, vv, ww,
+  ! uv, vw, uw) of the family f, and sh15 = the sum <u_i u_i> of the columns
+  ! with |k_h| < 1.5 damp_kperp.  Collective.  mfx, mfz: the box-height
+  ! integrals of the (0,0) column, whose box-mean part comes off family 1.
+  subroutine family_stats(inc00, mfx, mfz, fam, sh15)
+    integer(C_INT), intent(in) :: inc00
+    real(C_DOUBLE), intent(in) :: mfx, mfz
+    real(C_DOUBLE), intent(out) :: fam(6, NFAM), sh15
+    integer(C_INT) :: ix, iz, iy, f
+    real(C_DOUBLE) :: w, a(6), a1, a2, a3, a4, a5, a6, kx, kz, kpar, kperp, r, c, sn, tolk, ly_w, buf(6*NFAM + 1)
+    complex(C_DOUBLE_COMPLEX) :: cu, cv, cw
+    logical :: narrow, member(NFAM)
+    integer :: ierr
+
+    ! per-column second moments on the device
+    !$omp target teams distribute parallel do collapse(2) default(none) &
+    !$omp shared(V, dyl, fcol, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz, w, cu, cv, cw, a1, a2, a3, a4, a5, a6)
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        a1 = 0.0d0; a2 = 0.0d0; a3 = 0.0d0; a4 = 0.0d0; a5 = 0.0d0; a6 = 0.0d0
+        do iy = ny0, nyN
+          cu = V(iy, iz, ix, 1); cv = V(iy, iz, ix, 2); cw = V(iy, iz, ix, 3)
+          w = 2.0d0*dyl(iy)
+          if (ix == 0) w = dyl(iy)
+          a1 = a1 + w*dreal(cu*conjg(cu)); a2 = a2 + w*dreal(cv*conjg(cv)); a3 = a3 + w*dreal(cw*conjg(cw))
+          a4 = a4 + w*dreal(cu*conjg(cv)); a5 = a5 + w*dreal(cw*conjg(cv)); a6 = a6 + w*dreal(cu*conjg(cw))
+        end do
+        fcol(iz, ix, 1) = a1; fcol(iz, ix, 2) = a2; fcol(iz, ix, 3) = a3
+        fcol(iz, ix, 4) = a4; fcol(iz, ix, 5) = a5; fcol(iz, ix, 6) = a6
+      end do
+    end do
+    !$omp target update from(fcol)
+
+    c = cos(damping_theta(time)); sn = sin(damping_theta(time))
+    tolk = 0.5d0*min(alfa0, beta0)
+    fam = 0.0d0; sh15 = 0.0d0
+    do ix = nx0, nxN
+      kx = alfa0*ix
+      do iz = -nz, nz
+        kz = beta0*iz
+        a = fcol(iz, ix, :)
+        if (ix == 0 .and. iz == 0) then
+          fam(:, 1) = fam(:, 1) + a                 ! raw; the box mean comes off after the reduction
+          cycle
+        end if
+        kpar = kx*c + kz*sn; kperp = -kx*sn + kz*c
+        r = damping_radius(kpar, kperp)
+        narrow = abs(kperp) >= damp_kperp*(1.0d0 - FTOL)
+        member = .false.
+        member(2) = abs(kperp) < tolk
+        member(3) = abs(kpar) < tolk
+        member(4) = narrow
+        member(5) = (.not. narrow) .and. r >= damp_rw*(1.0d0 - FTOL)
+        member(6) = narrow .and. abs(kpar) < tolk
+        do f = 2, NFAM
+          if (member(f)) fam(:, f) = fam(:, f) + a
+        end do
+        if (sqrt(kx*kx + kz*kz) < 1.5d0*damp_kperp) sh15 = sh15 + a(1) + a(2) + a(3)
+      end do
+    end do
+    buf(1:6*NFAM) = reshape(fam, [6*NFAM]); buf(6*NFAM + 1) = sh15
+    call MPI_Allreduce(MPI_IN_PLACE, buf, 6*NFAM + 1, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+    fam = reshape(buf(1:6*NFAM), [6, NFAM]); sh15 = buf(6*NFAM + 1)
+    if (inc00 == 1) then
+      ! the (0,0) column enters as the fluctuation about its box mean (as in outstats)
+      ly_w = sum(dyl)
+      fam(1, 1) = fam(1, 1) - mfx*mfx/ly_w
+      fam(3, 1) = fam(3, 1) - mfz*mfz/ly_w
+      fam(6, 1) = fam(6, 1) - mfx*mfz/ly_w
+    else
+      fam(:, 1) = 0.0d0                              ! Stokes layer: the (0,0) column is the imposed flow
+    end if
+    sh15 = sh15 + fam(1, 1) + fam(2, 1) + fam(3, 1)
+  end subroutine family_stats
 
   ! Writes the column energies averaged since the previous call (or the
   ! start) and restarts the average.
@@ -140,7 +256,8 @@ contains
     real(C_DOUBLE) :: sums(16), q2, ed, pd, gsoft, qc, inv_ly, ly_w
     integer(C_INT) :: inc00         ! 1: the (0,0) column enters the fluctuation (about its box mean)
     complex(C_DOUBLE_COMPLEX) :: cu, cv, cw, dq
-    integer :: ierr
+    real(C_DOUBLE) :: fam(6, NFAM), sh15, th, ct, st, qf
+    integer :: ierr, f
 
     ! sums over modes and rows, each row weighted by its spacing dyl: the
     ! spectral (Parseval) sums over x and z give the horizontal mean via
@@ -253,6 +370,7 @@ contains
       mean_acc = mean_acc + (mfx*mfx + mfz*mfz)/ly_w
     end if
     q2 = uu + vv + ww
+    if (damping_active()) call family_stats(inc00, mfx, mfz, fam, sh15)
     if (has_terminal) then
       ! Convert the box-height integrals to y-averaged (box-mean) quantities
       ! with physically-meaningful units (mean per unit volume), so nothing
@@ -280,6 +398,18 @@ contains
         write (unit_dp, '(2(ES23.15,1X),I8,2(1X,ES23.15))') time, damping_theta(time)*180.0d0/3.141592653589793d0, &
           nint(sums(16)), 0.5d0*ed, 0.5d0*pd
         flush (unit_dp)
+        ! families: the shear frame of the mask, shares of the fluctuation, stresses per unit volume
+        th = damping_theta(time); ct = cos(th); st = sin(th)
+        write (unit_df, '(2(ES23.15,1X))', advance='no') time, th*180.0d0/3.141592653589793d0
+        write (unit_df, '(ES23.15,1X)', advance='no') sh15/max(q2, tiny(1.0d0))
+        do f = 1, NFAM
+          qf = fam(1, f) + fam(2, f) + fam(3, f)
+          write (unit_df, '(5(ES23.15,1X))', advance='no') qf/max(q2, tiny(1.0d0)), &
+            (ct*ct*fam(1, f) + st*st*fam(3, f) + 2.0d0*ct*st*fam(6, f))*inv_ly, fam(2, f)*inv_ly, &
+            (st*st*fam(1, f) + ct*ct*fam(3, f) - 2.0d0*ct*st*fam(6, f))*inv_ly, -(ct*fam(4, f) + st*fam(5, f))*inv_ly
+        end do
+        write (unit_df, '(A)') ''
+        flush (unit_df)
       end if
     end if
   end subroutine outstats

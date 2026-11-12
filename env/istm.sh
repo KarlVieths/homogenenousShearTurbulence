@@ -13,8 +13,9 @@ export OPAL_PREFIX=$NVHPC_DIR/comm_libs/mpi
 
 # Device architecture for `make GPU=1`
 case "$(hostname)" in
-  ISTM-corax) export GPU_ARCH=cc120 ;;   # RTX 5090
-  *)          export GPU_ARCH=cc86  ;;   # RTX 3060 (io2), RTX A6000 (cetus)
+  ISTM-corax)   export GPU_ARCH=cc120 ;;   # RTX 5090
+  ISTM-artemis) export GPU_ARCH=cc75  ;;   # GTX 1650 (Turing)
+  *)            export GPU_ARCH=cc86  ;;   # RTX 3060 (io2), RTX A6000 (cetus)
 esac
 
 # Multi-rank GPU runs on these boxes need this (UCX bug, see channel/HPC_SESSION.md)

@@ -74,6 +74,14 @@ program hst
     call generate_initial_field()
   end if
   !$omp target update to(V)
+  if (damping_active()) then
+    ! the clock may have come from the restart file; a hard mask zeroes the
+    ! state in its columns (a field from a smaller box, an ellipse run or the
+    ! random generator has energy there)
+    call damping_update(time)
+    if (damp_hard) call damping_zero_state()
+    if (has_terminal) call damping_report()
+  end if
   call stokes_setup()
   call stokes_apply()
   do m = 1, 3

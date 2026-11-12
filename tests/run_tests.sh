@@ -31,10 +31,15 @@ run 1     test_kelvin kelvin_stretched.in
 run 1     test_kelvin kelvin_damped.in
 run 1     test_kelvin kelvin_hard.in
 run 1     test_kelvin kelvin_outside.in
+run 1     test_kelvin kelvin_strip_removed.in
+run 1     test_kelvin kelvin_strip_edge.in
+run 1     test_kelvin kelvin_strip_small.in
+run 1     test_damping_mask mask_strip.in
 run "$np" test_pressure pressure.in
 run "$np" test_taylorgreen pressure.in
 run 1     test_forcing pressure.in
 run "$np" test_conservation pressure.in
+run "$np" test_conservation conservation_strip.in
 run "$np" test_stokes stokes.in
 run "$np" test_stats pressure.in
 rm -rf "$work"

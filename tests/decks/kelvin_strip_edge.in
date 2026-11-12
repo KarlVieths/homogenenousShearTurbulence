@@ -1,0 +1,8 @@
+! Wide-strip mask (T2b): the mode (1,1) = (kx, kz) = (2 pi, 2 pi/3) with the mask direction fixed at 90 deg
+! (e_par = z) has |k_perp| = kx = 2 pi exactly on the strip edge (up to the round-off of cos 90 deg), r = 1.41 < rw:
+! a column on the boundary is kept, the mode is unchanged.
+&mesh  nx = 3, ny = 128, nz = 3, alfa0 = 6.283185307179586, beta0 = 2.0943951023931953, ly = 2.0 /
+&physics  re = 2000.0, S = 1.0, linear = .true., exact_shift = .true. /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 1.0, nstep = 100000, dt_stat = 1.0, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&damping  damp_kpar = 2.0943951023931953, damp_kperp = 6.283185307179586, damp_hard = .true., damp_rw = 2.5, damp_follow = .false., damp_angle = 90.0 /

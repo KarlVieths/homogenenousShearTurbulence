@@ -9,7 +9,9 @@
 ! to zero), the three cross products sum to zero, and so does the whole.
 ! Discretely the numbers are O(dt) plus the (small) non-conservation of the
 ! compact scheme; anything of order one marks a wrong term.  Use a deck with
-! a well-resolved field (tests/decks/pressure.in).
+! a well-resolved field (tests/decks/pressure.in).  With a hard damping mask
+! (conservation_strip.in) the masked columns' right-hand sides are dropped as in
+! timestep(); the resolved columns still conserve the energy (Galerkin truncation).
 program test_conservation
 
   use, intrinsic :: iso_c_binding
@@ -25,6 +27,7 @@ program test_conservation
   use hst_transforms
   use hst_equations
   use hst_initial
+  use hst_damping, only: damping_active, damping_mask, ncol_damped
 
   implicit none
 
@@ -37,6 +40,7 @@ program test_conservation
   call test_setup()
   y_first = ny0 - 2
   y_last = nyN + 2
+  if (has_terminal .and. damping_active()) write (*, '(A,I0,A)') '   hard damping mask: ', ncol_damped, ' columns masked'
 
   do mask = 0, 6
     time = 0.0d0; deltat = 1.0d-4; oldrhs = 0
@@ -74,6 +78,7 @@ program test_conservation
         call products_to_spectral()
         call buildrhs(RK_rai(:, i), g)
       end do
+      if (damp_hard .and. damping_active()) call damping_mask()    ! hard mask: the columns' right-hand sides dropped
       dt_sub = 2.0d0/RK_rai(1, i)*deltat
       call shear_shift(dt_sub)
       time = time + dt_sub

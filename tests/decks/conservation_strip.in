@@ -1,0 +1,9 @@
+! Energy conservation of the nonlinear terms with the wide-strip hard mask (test_conservation; DAMPING.md
+! section 5, T4): the mask is a Galerkin truncation, a triad with a zero column feeds nothing to the others.
+! Semi-axes 1.5 alfa0 and 2 beta0 of the pressure.in lattice, rw = 2: removes the columns ix = 1, 2 with |iz| <= 1
+! and the ellipse; the energy (kpeak = 6) sits in what is left, ix >= 3 or |iz| >= 2.
+&mesh  nx = 15, ny = 64, nz = 15, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 200.0, S = 1.0, linear = .false. /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 0.1, nstep = 100000, dt_stat = 0.01, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&damping  damp_kpar = 3.1415926535897932, damp_kperp = 12.566370614359172, damp_hard = .true., damp_rw = 2.0, damp_follow = .false., damp_angle = 0.0 /

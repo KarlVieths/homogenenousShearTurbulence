@@ -1,0 +1,7 @@
+! Wide-strip hard mask (DAMPING.md section 5) on the 3:2:1 box enlarged three times: test_damping_mask.
+! alfa0, beta0 = 2 pi/9, 2 pi/3; the mask semi-axes are those of the small box, 2 pi/3 and 2 pi.
+&mesh  nx = 30, ny = 32, nz = 12, alfa0 = 0.6981317007977318, beta0 = 2.0943951023931953, ly = 2.0 /
+&physics  re = 200.0, S = 1.0, linear = .false. /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 0.1, nstep = 100000, dt_stat = 0.01, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&damping  damp_kpar = 2.0943951023931953, damp_kperp = 6.283185307179586, damp_hard = .true., damp_rw = 2.5 /

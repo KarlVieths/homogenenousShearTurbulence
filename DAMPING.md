@@ -48,6 +48,7 @@ Deck group `&damping` (optional; absent = off):
     damp_edge               width in r of a smoothstep ramp of g to zero at r = 1 (0 = step)
     damp_mean               damp the (0,0) column (mean profiles) too (default no)
     damp_follow             the ellipse follows the shear direction atan2(S2(t), S) (default); else damp_angle (deg)
+    damp_rw, damp_delta     wide-strip mask (section 5; hard mask only): remove r < damp_rw within |k_perp| < damp_kperp; keep the sliver |k_perp| < damp_delta damp_kperp (defaults 1, 0: the plain ellipse)
 
 Columns on the boundary (r = 1 within 1e-6) are kept, so with the
 semi-axes of a small box its own modes are the first ones kept.
@@ -229,3 +230,97 @@ absolute spread is 0.02 at n = 3, 0.007 at n = 5.)
   tools/soft.py (soft.csv, soft.png: what the damping removes vs rate);
   analyse.py --only hard --out angle_dependence_hard.png for the
   hard-mask cases alone.
+
+## 5. Wide-strip mask (option A, with option B) (2026-11-12)
+
+The hard ellipse on an enlarged box leaves b_perp,perp > 0 (+0.037 at
+n = 10, against -0.064 in the small box), i.e. xi < 0 where every
+homogeneous-shear reference has xi > 0.  Option A removes in addition the
+**wide strip**: the columns with wavelength across the shear above the small
+box's Lz that the ellipse leaves in place outside r = 1, where the spanwise
+variance sits (near-shear-aligned, fed by the tilting term -i k_perp S v).
+The proposal, with the linear-surrogate predictions, the run plan and the
+acceptance criteria, is `option_A_wide_strip_mask.md` (not in the repository;
+all numbers below are from the code, not from the surrogate).
+
+Removed set (shear frame, `damp_hard` only):
+
+    { (kx, kz) /= (0, 0) :  |k_perp| < damp_kperp  and  r < damp_rw },   damp_rw >= 1
+
+the ellipse r < damp_rw clipped to the strip |k_perp| < damp_kperp.  The
+ellipse r < 1 lies inside it, so `damp_rw = 1` (default) is the plain
+ellipse.  Option B: `damp_delta > 0` keeps the sliver |k_perp| < damp_delta
+damp_kperp of the strip (the ellipse is removed in any case).  Columns on a
+boundary (|k_perp| = damp_kperp, r = damp_rw) are kept, within the same 1e-6 as
+the ellipse.  r is the radius of `damp_norm` (the ellipse for p = 2).  Input
+checks: `damp_rw > 1` stops with an error unless `damp_hard` with `damp_rate =
+damp_edge = 0` (the combination with soft damping is undefined); `damp_delta`
+needs `damp_rw > 1` and 0 <= damp_delta < 1.  The mask is a Galerkin truncation
+for any set symmetric under k -> -k (it depends on |k_perp| and r only), so the
+resolved columns keep the ordinary budget and the removed power is zero.
+
+Masked columns (the whole plane without (0,0), both signs; `damp_rw` 2.5,
+theta = 0; the same numbers as the proposal, from an independent enumeration):
+
+    n        3     5    10
+    ellipse  24    68   304
+    option A 74    220  918      (over theta = 0..45 in 0.25 steps: n = 3: 74-90, n = 5: 220-246)
+
+theta = 0 is a resonant angle (the row |k_perp| = damp_kperp lies on the
+edge); calibrate damp_rw at a generic angle.
+
+* `hst_damping`: `damping_rate_of(kpar, kperp)` (rate, or 1 for a masked
+  column) is the single predicate used by the mask build and the start-up
+  summary; `damping_zero_state` zeroes V (ghost rows included) and the carried
+  explicit terms in the masked columns.
+* The hard mask now also zeroes the state **(a)** once at start, after the
+  initial field or the restart is read (a field from the small box or from an
+  ellipse run has energy in the newly masked columns, which would otherwise feed
+  the others through the nonlinear term of the first substep), and **(b)** after
+  every rebuild of the mask (`damp_follow` with a changing S2), before the
+  transform of that substep (`damping_update` moved in front of
+  `transform_to_physical` in `timestep`).  This applies to the plain ellipse too;
+  for a restart that is already masked it changes nothing (the masked columns are
+  exactly zero), and a 100-step run with `damp_rw = 1` from such a restart agrees
+  with the previous binary to the FFT-planning noise (relative 5e-12 in the
+  statistics, 1e-12 between two runs of the old binary: FFTW_MEASURE; some pairs
+  of runs are bitwise identical, including all statistics files).
+* Start-up summary on the terminal rank (`damping_report`): the masked columns
+  (whole plane and stored half plane, ellipse and strip), the small box's own
+  columns that are masked (when the semi-axes are whole multiples of alfa0,
+  beta0), the smallest |k_h| kept, overall and in the strip.
+* `statistics/damping_families.dat` (every `dt_stat`; new file, `damping_runtime.dat`
+  is unchanged): the energy share at |k_h| < 1.5 damp_kperp and, for six
+  overlapping families of columns (mean, spanwise-uniform |k_perp| < tol,
+  streamwise-uniform |k_par| < tol, narrow |k_perp| >= damp_kperp, small-scale
+  strip, streaks = narrow and streamwise-uniform; tol = half the smaller lattice
+  spacing), the share and the stresses <u_par^2>, <v^2>, <u_perp^2>, -<u_par v> in
+  the shear frame (header in `hst_stats.f90`).  For option A the mean, narrow
+  and small-scale-strip families partition the unmasked columns: their shares add
+  up to 1 and their stresses to the totals of `variances_runtime.dat` (checked to
+  1e-13 at theta = 0 and 26.6 deg).  q2(t) and eps(t) for the burst statistics
+  are in `Runtimedata`; the budget residual |P - eps - dE/dt| is not a run-time
+  column (dE/dt from the output interval is O(dt^2), not round-off): the
+  conservation of the nonlinear terms with the mask is a test (T4).
+
+Tests (`tests/run_tests.sh`; the suite, 22 test runs, passes on 1 and 2 CPU ranks):
+
+    test_damping_mask  mask_strip.in        T1 damp_rw = 1 equals the original ellipse predicate at 5 angles for
+                                            n = 3, 5, 10, and the counts 24/68/304; counts 74/220/918 of option A;
+                                            T2 lattice points (removed (4/3,1/3), (1,0), (2,0); kept: the edge
+                                            |Z| = 1, r = rw, r > rw, narrow, (0,0), (0,0) removed with damp_mean;
+                                            rw = 2: (2,0) on r = rw kept); option B (delta = 1/6: 64 columns,
+                                            the sliver kept); T3 mask(k) = mask(-k) and the z-mirror at -theta;
+                                            T5 counts against theta; state: zeroing, 15 nonlinear steps with the
+                                            mask turning from 0 to 26.6 deg at t = 0.01, masked columns exactly 0
+    test_kelvin        kelvin_strip_removed.in (T2a)  mode (4/3,1/3) in the strip outside the ellipse: stays 0
+    test_kelvin        kelvin_strip_edge.in    (T2b)  mode on |k_perp| = damp_kperp (mask direction 90 deg): unchanged, 3e-9
+    test_kelvin        kelvin_strip_small.in   (T2c)  mode in the strip at r = 3.04 > rw: unchanged, 3e-9
+    test_conservation  conservation_strip.in   (T4)   the nonlinear terms conserve the energy with the mask
+
+Not done: the runs (phase 1 of the proposal: n = 3, theta = 0, rw = 2.25, 2.5,
+option B control), the GPU build (the new kernels, `damping_zero_state` and the
+family sums, are written in the style of the existing ones and are untested
+there), and the family split in `tools/spectrum.py` (the tools of section 4
+are not in this repository).
+

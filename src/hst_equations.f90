@@ -34,7 +34,7 @@ module hst_equations
   use hst_params
   use hst_derivatives, only: fill_ghosts, fill_ghosts_field, shear_shifts, s2_of, s2_integral
   use hst_stokes, only: stokes_active, stokes_force, stokes_apply
-  use hst_damping, only: damping_active, damping_update, damping_mask, damping_soft_factor
+  use hst_damping, only: damping_active, damping_update, damping_mask, damping_soft_factor, damping_zero_state
   use hst_linsolve, only: line_solve, KIND_D2V, KIND_ETA, KIND_D0, KIND_DY
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral, compute_cfl
@@ -56,12 +56,19 @@ contains
   subroutine timestep()
     integer(C_INT) :: i, m
     real(C_DOUBLE) :: dt_sub
+    logical :: rebuilt
     do i = 1, 3
       call tic()
+      ! the mask of the shear direction at this substep; a rebuilt hard mask
+      ! zeroes the state in its columns before the transform, so that their
+      ! energy does not enter the products of this substep
+      if (damping_active()) then
+        call damping_update(time, rebuilt)
+        if (rebuilt .and. damp_hard) call damping_zero_state()
+      end if
       if (.not. linear .or. i == 3) call transform_to_physical()
       if (i == 3) call compute_cfl()
       call toc(T_TRANSFORM)
-      if (damping_active()) call damping_update(time)
       call buildrhs_prepare(RK_rai(:, i))
       call toc(T_PREPARE)
       if (.not. linear) then

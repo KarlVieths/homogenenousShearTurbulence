@@ -45,7 +45,10 @@ module hst_params
   ! large-scale damping (hst_damping, DAMPING.md): a body force -gdamp(kx, kz) u on the
   ! columns inside the region r < 1 of the shear frame, r = ((|k_par|/damp_kpar)^p +
   ! (|k_perp|/damp_kperp)^p)^(1/p), p = damp_norm (2: ellipse).  damp_kpar = 0: off.
-  real(C_DOUBLE), save :: damp_kpar, damp_kperp, damp_rate, damp_edge, damp_norm, damp_angle
+  ! Wide-strip mask (hard mask only, damp_rw > 1): in addition the columns of the strip
+  ! |k_perp| < damp_kperp with r < damp_rw are removed, except the sliver
+  ! |k_perp| < damp_delta*damp_kperp (damp_delta = 0: none kept).  damp_rw = 1: the plain ellipse.
+  real(C_DOUBLE), save :: damp_kpar, damp_kperp, damp_rate, damp_edge, damp_norm, damp_angle, damp_rw, damp_delta
   logical, save :: damp_hard, damp_mean, damp_follow
 
   !------------------------------------------------------- clock and I/O ----
