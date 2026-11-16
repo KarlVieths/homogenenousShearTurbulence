@@ -2,6 +2,25 @@
 
 Copy the block at the end as the opening message of the next session.
 
+## Session 17 (2026-11-13 to 16): production filter, branch `production_filter`
+
+- `&production` (`prod_kc`, `prod_edge`), `src/hst_production.f90`: the mean
+  shear produces only in the columns with sqrt(kx^2 + kz^2) >= prod_kc, a
+  step or a smoothstep; no mode is damped and nothing depends on the shear
+  direction.  Report, figures, decks, results and scripts:
+  `doc/production_filter.md`, `doc/assets/`.  With the smooth edge (k_c =
+  2 pi/sqrt 3, edge 0.3, box 15 x 2 x 5) q2 is independent of the shear
+  direction within 3.4 % and the structure within the error bars; the
+  sharp filter keeps 7-16 % in the level (lattice rows next to the cutoff).
+- The branch is rebased on `main` 85d9cfe and removes the large-scale
+  damping of session 16 (`src/hst_damping.f90`, `DAMPING.md`, `&damping`),
+  which the filter replaces; the references to DAMPING.md below and in
+  FINDINGS.md point to `main` up to that commit.
+- Open: the square, taller box (10.5 x 2 sqrt 3 x 10.5, smooth edge; HoreKA
+  job 5240934 running at the time of the push), angles above 45 deg, an
+  unsteady shear direction with the filter (`doc/production_filter.md`
+  section 6).
+
 ## Session 16 (2026-11-06 to 08): large-scale damping, merged into main
 
 - The branch `damping_from_main` (DAMPING.md) added `src/hst_damping.f90`

@@ -389,6 +389,7 @@ src/hst_initial.f90      seeded initial field
 src/hst_io.f90           restart and snapshot files
 src/hst_derivatives.f90  compact stencils, shear-periodic ghost rows
 src/hst_linsolve.f90     cyclic pentadiagonal solves, one thread per mode, rows built on the fly, real factor
+src/hst_production.f90   the production filter G(k_h) (doc/production_filter.md)
 src/hst_equations.f90    the equations and one RK step
 src/hst_stats.f90        statistics/Runtimedata and the other run-time files
 src/hst_pressure.f90     pressure at snapshot times
@@ -397,4 +398,5 @@ src/postpro/postpro.f90  post-processing: plane statistics, spectra and budgets 
 tests/                   test programs on tests/test_common.f90, decks, runner, regression, field comparison
 env/, jobs/              environment scripts and SLURM jobs
 examples/                benchmark decks
+doc/                     the production filter: report, figures, and the decks, results and scripts of its campaign (doc/assets/campaign/)
 ```
