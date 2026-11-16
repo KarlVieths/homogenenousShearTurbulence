@@ -31,6 +31,10 @@ run 1     test_kelvin kelvin_stretched.in
 run 1     test_kelvin kelvin_damped.in
 run 1     test_kelvin kelvin_hard.in
 run 1     test_kelvin kelvin_outside.in
+run 1     test_kelvin kelvin_unforced.in
+run 1     test_kelvin kelvin_unforced_s2.in
+run 1     test_kelvin kelvin_halfforced.in
+run 1     test_kelvin kelvin_forced.in
 run "$np" test_pressure pressure.in
 run "$np" test_taylorgreen pressure.in
 run 1     test_forcing pressure.in

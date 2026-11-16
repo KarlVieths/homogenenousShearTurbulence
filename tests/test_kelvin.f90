@@ -15,6 +15,10 @@
 !
 ! v is checked for any S2(t) (the k^2 integral is done numerically); eta
 ! only for constant S2 (s2_period = 0), where its integral is closed-form.
+! With the production filter G of the column (PRODUCTION.md) the production
+! is partly removed:  v(t) = v0 (k0^2/k(t)^2)^((1 + G)/2)  (G = 0: |v| k is
+! constant and, for kz = 0, so is the energy: the tilting alone conserves
+! it), and for G = 0 eta keeps eta0; eta is not checked for 0 < G < 1.
 ! Discretisation errors: O(deltat^3) in time, and with the default
 ! advection the (1/6) dy^2 (ky0^2 - ky(t)^2) term of FINDINGS.md; with
 ! exact_shift only the sixth-order stencil error remains.  Passes at 1e-3
@@ -42,7 +46,7 @@ program test_kelvin
   integer(C_INT), parameter :: ix = 1, iz = 1, mky = 1
   complex(C_DOUBLE_COMPLEX), parameter :: v0 = (1.0d0, 0.0d0), eta0 = (0.3d0, -0.2d0)
   real(C_DOUBLE) :: kx, kz, ky0, kh, kh2, k02, kyt, k2t, visc, err_v, err_eta, ratio, t_end
-  real(C_DOUBLE) :: c, tq, k2int, s2c, gk
+  real(C_DOUBLE) :: c, tq, k2int, s2c, gk, gp
   complex(C_DOUBLE_COMPLEX) :: vex, etaex, u0, w0, ph
   logical :: check_eta
 
@@ -90,11 +94,14 @@ program test_kelvin
   end do
   k2int = k2int*time/20000.0d0
   visc = exp(-ni*k2int)
-  vex = v0*k02/k2t*visc
-  check_eta = (s2_period == 0.0d0 .and. s2_start <= 0.0d0)
+  gp = gprod(iz, ix)                       ! production filter of this column (1: off)
+  vex = v0*(k02/k2t)**(0.5d0*(1.0d0 + gp))*visc
+  check_eta = (s2_period == 0.0d0 .and. s2_start <= 0.0d0) .and. (gp == 1.0d0 .or. gp == 0.0d0)
   s2c = s2_of(0.0d0)
   c = S*kx + s2c*kz                        ! d ky/dt = -c for constant S2
-  if (abs(c) > 0.0d0) then
+  if (gp == 0.0d0) then
+    etaex = eta0*visc
+  else if (abs(c) > 0.0d0) then
     etaex = (eta0 + (s2c*I*kx - S*I*kz)*v0*k02/(kh*c)*(atan(ky0/kh) - atan(kyt/kh)))*visc
   else
     etaex = (eta0 + (s2c*I*kx - S*I*kz)*v0*time)*visc
@@ -122,6 +129,7 @@ program test_kelvin
     stop
   end if
   if (has_terminal .and. gk > 0.0d0) write (*, '(A,F8.4)') '   damped column, rate ', gk
+  if (has_terminal .and. gp < 1.0d0) write (*, '(A,F8.4)') '   production filter of the column: G = ', gp
   if (has_terminal) then
     write (*, '(A,F8.4,A,I0,A,ES9.2,A,F6.3,A,F6.3)') '   Kelvin mode to t = ', time, ' in ', n, ' steps of ', deltat, &
       '   S = ', S, '  S2(0) = ', s2c
@@ -130,7 +138,7 @@ program test_kelvin
     if (check_eta) then
       write (*, '(A,ES10.2,A,ES10.2)') '   max error in eta: ', err_eta, '   relative ', err_eta/abs(etaex)
     else
-      write (*, '(A)') '   (eta not checked: no closed form for time-dependent S2)'
+      write (*, '(A)') '   (eta not checked: no closed form for time-dependent S2 or 0 < G < 1)'
     end if
   end if
   call test_finish(err_v/abs(vex) <= 1.0d-3 .and. (.not. check_eta .or. err_eta/abs(etaex) <= 1.0d-3))

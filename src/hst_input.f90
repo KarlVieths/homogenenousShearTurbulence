@@ -21,7 +21,8 @@ contains
       sl_amplitude, sl_period, sl_delta, sl_start, sl_bodyforce, sl_ramp
     namelist /time_control/ deltat, cflmax, t_max, nstep, wall_max, dt_stat, dt_field, dt_save, time, time_from_restart, restart_from_file, restart_remap, restart_file, timing
     namelist /init/ initial_condition, amplitude, seed, kpeak, tg_amplitude, tg_mode
-    namelist /damping/ damp_kpar, damp_kperp, damp_rate, damp_hard, damp_edge, damp_norm, damp_mean, damp_follow, damp_angle
+    namelist /damping/ damp_kpar, damp_kperp, damp_rate, damp_hard, damp_edge, damp_norm, damp_mean, damp_follow, damp_angle, &
+      prod_kc, prod_edge
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
@@ -40,6 +41,7 @@ contains
     damp_kpar = 0.0d0; damp_kperp = 0.0d0; damp_rate = 0.0d0; damp_hard = .false.; damp_edge = 0.0d0
     damp_norm = 2.0d0; damp_mean = .false.; damp_follow = .true.; damp_angle = 0.0d0
     tg_amplitude = 1.0d0; tg_mode = 1
+    prod_kc = 0.0d0; prod_edge = 0.0d0
 
     open (newunit=unit, file=filename, status='old', action='read', iostat=ios)
     if (ios /= 0) then
@@ -88,6 +90,10 @@ contains
       print *, 'ERROR: tg_mode must be positive'
       error stop 1
     end if
+    if (prod_kc < 0.0d0 .or. prod_edge < 0.0d0 .or. prod_edge >= 1.0d0) then
+      print *, 'ERROR: the production filter needs prod_kc >= 0, 0 <= prod_edge < 1'
+      error stop 1
+    end if
 
     ! derived quantities
     ni = 1.0d0/re
@@ -134,6 +140,7 @@ contains
     if (damp_kpar > 0.0d0) write (*, '(A,F8.4,A,F8.4,A,F6.2,A,L1,A,F8.3,A,F6.3,A,L1,A,L1,A,F8.3)') &
       '   damping: k_par <', damp_kpar, '  k_perp <', damp_kperp, '  norm=', damp_norm, '  hard=', damp_hard, &
       '  rate=', damp_rate, '  edge=', damp_edge, '  mean=', damp_mean, '  follow=', damp_follow, '  angle=', damp_angle
+    if (prod_kc > 0.0d0) write (*, '(A,F8.4,A,F6.3)') '   production filter: |k_h| >=', prod_kc, '  edge=', prod_edge
     write (*, '(A,F10.6,A,F10.6,A,F10.3)') '   deltat=', deltat, '   cflmax=', cflmax, '   t_max =', t_max
     write (*, '(A,F10.4,A,F10.4,A,F10.4)') '   dt_stat=', dt_stat, '  dt_field=', dt_field, '  dt_save=', dt_save
     write (*, '(A,I10,A,F10.0,A,L1,A,L1,A,A)') '   nstep =', nstep, '   wall_max =', wall_max, &

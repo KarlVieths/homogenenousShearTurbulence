@@ -14,6 +14,11 @@
 ! and the optional large-scale damping -g(alfa, beta) u (hst_damping):
 ! -g d2v and -g eta, explicit like the tilting term; with the hard mask the
 ! masked columns' right-hand sides are dropped instead (damping_mask).
+! With the production filter G(alfa, beta) (hst_damping, PRODUCTION.md) the
+! production term -v (S, 0, S2) of the momentum equation is multiplied by
+! G: the lift-up term of eta becomes G (S2 i alfa - S i beta) D0 v and d2v
+! gets -(1 - G) (i alfa S + i beta S2) D1 v (without the filter the
+! production and the advection cancel in the d2v equation).
 ! The mean-shear advection (S y d/dx + S2 y d/dz) is not in these: it is
 ! integrated exactly by the phase exp(-i (alfa S dt + beta int S2 dt) y)
 ! applied after each substep (shear_shift).  Time stepping: RK3 (Rai-Moin) for the explicit terms,
@@ -92,29 +97,32 @@ contains
   subroutine buildrhs_prepare(ODE)
     real(C_DOUBLE), intent(in) :: ODE(3)
     integer(C_INT) :: ix, iy, iz, j
-    complex(C_DOUBLE_COMPLEX) :: unkn, impl, expl, f
-    real(C_DOUBLE) :: helm, biharm, s2now, force, g, gsoft
+    complex(C_DOUBLE_COMPLEX) :: unkn, impl, expl, f, dv
+    real(C_DOUBLE) :: helm, biharm, s2now, force, g, gsoft, gp
 
     s2now = s2_of(time)
     gsoft = damping_soft_factor()
     call stokes_force(time)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, rhs, oldrhs, der, k2, ialfa, ibeta, gdamp, ni, S, s2now, gsoft, fy, deltat, ODE, nx0, nxN, nz, ny0, nyN) &
-    !$omp private(ix, iy, iz, j, unkn, impl, expl, f, helm, biharm, force, g)
+    !$omp shared(V, rhs, oldrhs, der, k2, ialfa, ibeta, gdamp, gprod, ni, S, s2now, gsoft, fy, deltat, ODE, nx0, nxN, nz, ny0, nyN) &
+    !$omp private(ix, iy, iz, j, unkn, impl, expl, f, dv, helm, biharm, force, g, gp)
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = ny0, nyN
           g = gsoft*gdamp(iz, ix)          ! large-scale damping rate of the column (soft only)
+          gp = gprod(iz, ix)               ! production filter of the column (1: unfiltered)
           ! v equation
-          unkn = 0.0d0; impl = 0.0d0
+          unkn = 0.0d0; impl = 0.0d0; dv = 0.0d0
           do j = -2, 2
             helm = der(iy, 2, j) - k2(iz, ix)*der(iy, 0, j)
             biharm = der(iy, 3, j) - 2.0d0*k2(iz, ix)*der(iy, 2, j) + k2(iz, ix)*k2(iz, ix)*der(iy, 0, j)
             unkn = unkn + helm*V(iy + j, iz, ix, 2)
             impl = impl + ni*biharm*V(iy + j, iz, ix, 2)
+            dv = dv + der(iy, 1, j)*V(iy + j, iz, ix, 2)
           end do
-          rhs(iy, iz, ix, 2) = ODE(1)*unkn/deltat + impl - ODE(3)*oldrhs(iy, iz, ix, 2) - ODE(2)*g*unkn
-          oldrhs(iy, iz, ix, 2) = -g*unkn
+          expl = -g*unkn - (1.0d0 - gp)*(S*ialfa(ix) + s2now*ibeta(iz))*dv     ! damping; production removed from the column
+          rhs(iy, iz, ix, 2) = ODE(1)*unkn/deltat + impl - ODE(3)*oldrhs(iy, iz, ix, 2) + ODE(2)*expl
+          oldrhs(iy, iz, ix, 2) = expl
           ! eta equation (mean mode: u and w packed as one complex number)
           unkn = 0.0d0; impl = 0.0d0; expl = 0.0d0; force = 0.0d0
           do j = -2, 2
@@ -129,7 +137,7 @@ contains
               unkn = unkn + der(iy, 0, j)*f
               impl = impl + ni*helm*f
             end if
-            expl = expl + (s2now*ialfa(ix) - S*ibeta(iz))*der(iy, 0, j)*V(iy + j, iz, ix, 2)   ! tilting of the mean vorticity
+            expl = expl + gp*(s2now*ialfa(ix) - S*ibeta(iz))*der(iy, 0, j)*V(iy + j, iz, ix, 2)   ! tilting of the mean vorticity
           end do
           if (ix == 0 .and. iz == 0) expl = expl + dcmplx(0.0d0, force)
           expl = expl - g*unkn                     ! large-scale damping of eta (mean column: of u, w)
