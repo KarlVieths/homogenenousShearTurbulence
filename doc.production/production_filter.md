@@ -83,7 +83,7 @@ shear, which may be steady, turned, or unsteady (`s2_*` of the deck).
 | `src/hst_production.f90` | `gprod(iz, ix)` = G, built once; 1 everywhere when off |
 | `src/hst_equations.f90`, `buildrhs_prepare` | the lift-up term of eta is multiplied by G; the d2v equation gets the explicit term -(1 - G)(i alfa S + i beta S2) D1 v.  (Unfiltered, the production and the advection cancel in that equation; removing the production leaves the advection's half.)  With G = 1 the added terms are exact zeros |
 | `src/hst_stats.f90` | `statistics/production_runtime.dat`, every `dt_stat`: time, number of columns with G < 1, <(1 - G) uu>, <(1 - G) vv>, <(1 - G) ww>, nu <(1 - G) grad u : grad u>, <G u v>, <G w v>, <(1 - G) u w>.  The first five are the unforced range (its variances and its dissipation, which in the mean equals the nonlinear flux into it), the stresses <G u v>, <G w v> are the ones that produce, the last turns the unforced variances into the shear frame |
-| `tests/test_kelvin.f90`, four decks | see 2.3 |
+| `tests/test_kelvin.f90`, four decks; `tests/test_kelvin_s2.f90`, 13 decks | see 2.3 |
 
 ### 2.3 Verification
 
@@ -102,6 +102,21 @@ the regression (three decks at 1e-10) pass on the CPU build and on the GPU
 build (RTX 3060); the NCCL build was not rerun.  In the turbulent runs
 production/dissipation is 1.002 over S t = 400..1400 (the budget above
 closes to the statistical drift).
+
+With an oscillating spanwise shear the single-time checks above are not
+enough: the filtered source terms see S2(t) at every Runge-Kutta substep, and
+for k_x = 0 a Kelvin mode is back at its initial wavenumber after every
+period, where v = v0 E whatever G is.  `tests/test_kelvin_s2` therefore
+follows one column over 10 periods of S2 = A sin(omega t) (A/S = 1, S T =
+1.75, 5.25, 14; k_x = 0 and 2 pi/15) at eight times per period and compares
+v, eta, the energy (no gain for G = 0), the projection on exp(i k_y(t) y) and
+gamma_y with the closed form for any S2(t) (`tests/KELVIN_S2.md`).  Errors
+are 3e-6 or less (tolerance 1e-5); the time error is third order without
+viscosity and second to 2.5th order with it (Crank-Nicolson), for the
+oscillating runs as for the constant-S2 control.  Eight deliberate
+bugs in the solver (S2 at the start of the step instead of the substep, wrong
+sign or period of gamma_z, S2 missing or of the wrong sign in one of the two
+filtered terms, ...) are each caught by at least one deck.
 
 The campaign of section 3 was run with the first commit of this branch
 before it was rebased on the current `main` and the deck group was named
@@ -430,5 +445,6 @@ and what the code of this branch writes:
   it (section 4.3: the forced ranges agree within 2 sigma, with large
   errors on the small-box side); an exact statement needs the roller's
   contribution accumulated at run time in the small box.
-* **Unsteady shear direction.**  The filter is defined for any S2(t);
-  no such run has been made with it yet.
+* **Unsteady shear direction.**  The filter is defined for any S2(t); the
+  linear solver is verified for it (section 2.3, `tests/KELVIN_S2.md`), no
+  turbulent run has been made with it yet.

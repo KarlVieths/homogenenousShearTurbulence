@@ -14,12 +14,15 @@
 ! mean-shear advection, the tilting terms and the implicit solves at once.
 !
 ! v is checked for any S2(t) (the k^2 integral is done numerically); eta
-! only for constant S2 (s2_period = 0), where its integral is closed-form.
+! only for constant S2 (s2_period = 0), where its integral is closed-form; the
+! time series over many S2 periods, eta for any S2(t) and the energy are in
+! test_kelvin_s2.
 ! With the production filter G of the column (PRODUCTION.md) the production
 ! is partly removed:  v(t) = v0 (k0^2/k(t)^2)^((1 + G)/2)  (G = 0: |v| k is
 ! constant and, for kz = 0, so is the energy: the tilting alone conserves
 ! it), and for G = 0 eta keeps eta0; eta is not checked for 0 < G < 1.
-! Discretisation errors: O(deltat^3) in time, and with the default
+! Discretisation errors: O(deltat^3) in time without viscosity (second order
+! with it, tests/KELVIN_S2.md), and with the default
 ! advection the (1/6) dy^2 (ky0^2 - ky(t)^2) term of FINDINGS.md; with
 ! exact_shift only the sixth-order stencil error remains.  Passes at 1e-3
 ! relative (tests/decks/kelvin*.in).

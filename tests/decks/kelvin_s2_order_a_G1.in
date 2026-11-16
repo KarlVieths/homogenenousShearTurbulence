@@ -1,0 +1,7 @@
+! test_kelvin_s2 deck (tests/kelvin_test_unsteady_S2.md): order of accuracy in time, with a spatial error below 1e-9: dt, dt/2, dt/4, dt/8 (observed order >= 1.6)
+! One column (kx = 0, kz = 2 pi/5), S = 1, S2 = 1 sin(2 pi t/5.25), nu = 1e-3; G of the column = 1.
+&mesh  nx = 1, ny = 256, nz = 1, alfa0 = 0.41887902047863906, beta0 = 1.2566370614359172, ly = 2.0 /
+&physics  re = 1000, S = 1.0, linear = .true., exact_shift = .true., s2_amplitude = 1, s2_period = 5.25 /
+&time_control  deltat = 0.105, cflmax = 0.0, t_max = 3.15, nstep = 100000, dt_stat = 1e9, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&kelvin  ix_mode = 0, iz_mode = 1, iy_mode = 1, tol = 5e-05, dt_out = 1.05, refine = 3, order_min = 1.6 /

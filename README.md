@@ -292,6 +292,15 @@ tests/run_tests.sh build-cpu 2         # or build-gpu; second argument: ranks
   treatment of the mean-shear advection (second order in dy, FINDINGS.md),
   4e-9 with `exact_shift = .true.`; also with constant and oscillating
   spanwise shear S2 (4e-9).
+- `test_kelvin_s2`: one Fourier column as a time series, with the production
+  filter and an oscillating S2 (13 decks: 10 periods, kx = 0 and kx != 0,
+  G = 0, 0.2-0.4 and 1, S T = 1.75 to 14, S2 switched on late, and four
+  order-of-accuracy runs with a constant-S2 control).  Checks v, eta, the
+  energy (no gain for G = 0), the projection residual on exp(i ky(t) y) and
+  gamma_y at eight times per period, against a closed form that holds for any
+  S2(t); `tests/kelvin_ref.py` is an independent reference that also checks
+  four of the tables, `tests/kelvin_s2_study.py` runs the full matrix.
+  tests/KELVIN_S2.md.
 - `test_pressure`: Taylor-Green vortex against its exact pressure
   (1.9e-5 at ny = 64).
 - `test_taylorgreen`: Taylor-Green vortices in two orientations decay
@@ -377,7 +386,7 @@ snapshots at 19-29 s each.
 | y decomposition | merged into `main` in session 11 (tags `xz-parallel` before, `xyz-parallel` after; DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.33x (256^3) and 1.79x (512^3) one node (FINDINGS.md); `npy = 0` (default) lets the code choose: one slab per node |
 | large-scale damping | merged from `damping_from_main` (doc.damping/DAMPING.md): `&damping` masks the x-z columns inside an ellipse of the shear frame, so a box enlarged n times keeps the small box's length scale at any shear direction; hard mask (Galerkin truncation) or soft rate; campaign n = 2..5 at four angles: the structure (S*, b_ij, correlations) is angle independent from n = 3 on, the level follows the lattice count near the ellipse (1/n) |
 | production filter | `&production` (`prod_kc`, `prod_edge`), `src/hst_production.f90`, [doc.production/production_filter.md](doc.production/production_filter.md): with a smooth edge the statistics of a 15 x 2 x 5 box are independent of the shear direction within 3 % in the level and 0.002 in the anisotropy; decks of the campaign in `doc.production/assets/campaign/` |
-| safety net | `tests/run_tests.sh` (22 runs, three of them the damping and four the production-filter Kelvin modes) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
+| safety net | `tests/run_tests.sh` (34 runs, three of them the damping, four the production-filter Kelvin modes and thirteen the oscillating-S2 Kelvin series) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
 
