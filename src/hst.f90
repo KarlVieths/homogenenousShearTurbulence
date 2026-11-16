@@ -32,6 +32,7 @@ program hst
   use hst_stats
   use hst_pressure
   use hst_stokes
+  use hst_damping
   use hst_production
   use hst_timer
 #ifdef HAVE_CUDA
@@ -65,6 +66,7 @@ program hst
   call init_fft()
   call init_linsolve()
   call setup_derivatives()
+  call damping_setup()
   call production_setup()
   call make_output_dirs()
   if (restart_from_file) then
@@ -86,6 +88,8 @@ program hst
   call transform_to_physical()
   call compute_cfl()
   call new_timestep()
+  if (has_terminal .and. damping_active() .and. .not. damp_hard .and. damp_rate*deltat > 1.0d0) &
+    print '(A,F8.3)', '   WARNING: explicit damping with damp_rate*deltat = ', damp_rate*deltat
   ifield = floor(time/dt_field)          ! CPL numbering: fields/field<ifield+1>.fld is the next one
   if (has_terminal) write (*, '(A)') '        time       deltat       cfl         energy           diss' // &
     '             uv             vw      (y-averaged; diss = nu <grad u : grad u>)'

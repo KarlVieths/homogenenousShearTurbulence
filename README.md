@@ -14,11 +14,14 @@ optionally with an unsteady spanwise component `W = S2(t)*y`
 (`S2 = A sin(2 pi (t - t0)/T)`, the `S2data.cpl` law) or a Stokes layer
 (an oscillating spanwise profile at mid-box driven by its body force, the
 `SLdata.cpl` model, on a grid clustered at mid-box with `ystretch`),
-optionally with a production filter (the `&production` group,
+optionally with a large-scale damping of the Fourier columns inside an
+ellipse of the shear frame (the `&damping` group, [DAMPING.md](DAMPING.md):
+an enlarged box that keeps the length scale of a small one), or with a
+production filter (the `&production` group,
 [doc/production_filter.md](doc/production_filter.md): the mean shear
 produces energy only in the Fourier columns with `sqrt(kx^2 + kz^2) >=
-prod_kc`, sharply or through a smooth edge, so an enlarged box keeps a
-length scale that does not depend on the direction of the shear), in a
+prod_kc`, sharply or through a smooth edge, which sets a length scale
+that does not depend on the direction of the shear), in a
 box that is periodic in `x` (streamwise) and `z` (spanwise) and
 shear-periodic in `y`: Fourier in `x` and `z` with 3/2 dealiasing, compact
 (five-point, fourth-order for `d/dy` and `d2/dy2`, sixth for `d4/dy4`)
@@ -150,7 +153,7 @@ starts from a field, the restart file (`Dati.cart.in...`, named by
 `fields/`, `p_fields/`, `statistics/` (with `statistics/spectra/`) and `vtks/`
 (`mkdir -p`: existing directories and their contents are left alone).
 The run-time statistics below, `Runtimedata`, `variances_runtime.dat` and, when
-active, `stokes_runtime.dat` and `production_runtime.dat`, are written to
+active, `stokes_runtime.dat`, `damping_runtime.dat` and `production_runtime.dat`, are written to
 `statistics/`, the directory that `post/cpl/` and `postpro` write their
 statistics to as well.  The files are always opened for appending: they are
 never truncated, a restart continues them (with one repeated line at the
@@ -372,8 +375,9 @@ snapshots at 19-29 s each.
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
 | NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
 | y decomposition | merged into `main` in session 11 (tags `xz-parallel` before, `xyz-parallel` after; DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.33x (256^3) and 1.79x (512^3) one node (FINDINGS.md); `npy = 0` (default) lets the code choose: one slab per node |
-| production filter | `&production` (`prod_kc`, `prod_edge`), `src/hst_production.f90`, [doc/production_filter.md](doc/production_filter.md): with a smooth edge the statistics of a 15 x 2 x 5 box are independent of the shear direction within 3 % in the level and 0.002 in the anisotropy; decks of the campaign in `doc/assets/campaign/`.  It replaces the large-scale damping of the ellipse in the shear frame (hard mask and soft rate; `DAMPING.md` and `src/hst_damping.f90` up to commit 85d9cfe of `main`), which this branch removes |
-| safety net | `tests/run_tests.sh` (19 runs, four of them the production-filter Kelvin modes) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
+| large-scale damping | merged from `damping_from_main` (DAMPING.md): `&damping` masks the x-z columns inside an ellipse of the shear frame, so a box enlarged n times keeps the small box's length scale at any shear direction; hard mask (Galerkin truncation) or soft rate; campaign n = 2..5 at four angles: the structure (S*, b_ij, correlations) is angle independent from n = 3 on, the level follows the lattice count near the ellipse (1/n) |
+| production filter | `&production` (`prod_kc`, `prod_edge`), `src/hst_production.f90`, [doc/production_filter.md](doc/production_filter.md): with a smooth edge the statistics of a 15 x 2 x 5 box are independent of the shear direction within 3 % in the level and 0.002 in the anisotropy; decks of the campaign in `doc/assets/campaign/` |
+| safety net | `tests/run_tests.sh` (22 runs, three of them the damping and four the production-filter Kelvin modes) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
 

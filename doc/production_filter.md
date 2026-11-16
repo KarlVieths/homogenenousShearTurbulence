@@ -36,15 +36,15 @@ to 7.3 between 0 and 45 deg).
 
 A constraint that fixes the length scale and is isotropic in the x-z
 plane removes the box from the problem, provided the box is much larger
-than that scale.  A constraint defined in the frame of the shear (for
-example a mask that turns with it) is excluded: it acts on the flow
-whenever the direction changes.
+than that scale.  A constraint defined in the frame of the shear is
+excluded: it has to turn with the shear, and so acts on the flow whenever
+the direction changes.
 
 ## 2. What is implemented
 
 ### 2.1 The filter
 
-No mode is removed or damped.  The length scale is prescribed through
+No mode is removed.  The length scale is prescribed through
 the energy injection: the mean shear produces energy only in the Fourier
 columns (k_x, k_z) with
 
@@ -85,13 +85,6 @@ shear, which may be steady, turned, or unsteady (`s2_*` of the deck).
 | `src/hst_stats.f90` | `statistics/production_runtime.dat`, every `dt_stat`: time, number of columns with G < 1, <(1 - G) uu>, <(1 - G) vv>, <(1 - G) ww>, nu <(1 - G) grad u : grad u>, <G u v>, <G w v>, <(1 - G) u w>.  The first five are the unforced range (its variances and its dissipation, which in the mean equals the nonlinear flux into it), the stresses <G u v>, <G w v> are the ones that produce, the last turns the unforced variances into the shear frame |
 | `tests/test_kelvin.f90`, four decks | see 2.3 |
 
-The branch also removes the earlier approach, the large-scale damping of
-the columns inside an ellipse of the shear frame (hard mask or soft rate:
-`src/hst_damping.f90`, `DAMPING.md`, deck group `&damping`, on `main` up
-to commit 85d9cfe).  It gave angle-independent statistics only in a
-30 x 2 x 10 box, changed the flow already at theta = 0, and its ellipse
-has to turn with the shear.
-
 ### 2.3 Verification
 
 A Kelvin mode in a column with filter value G has the closed form
@@ -104,15 +97,15 @@ its initial value.  `tests/test_kelvin` checks it with
 `kelvin_unforced.in` (G = 0: relative error 5e-9 in v, 3e-10 in eta),
 `kelvin_unforced_s2.in` (with a constant S2: 4e-9, 2e-9),
 `kelvin_halfforced.in` (G = 0.547 in a smooth edge: 5e-9) and
-`kelvin_forced.in` (above the cutoff: unchanged).  The suite (19 runs) and
+`kelvin_forced.in` (above the cutoff: unchanged).  The suite (22 runs) and
 the regression (three decks at 1e-10) pass on the CPU build and on the GPU
 build (RTX 3060); the NCCL build was not rerun.  In the turbulent runs
 production/dissipation is 1.002 over S t = 400..1400 (the budget above
 closes to the statistical drift).
 
 The campaign of section 3 was run with the first commit of this branch
-(binary `hst-a100-pf`, deck group `&damping`) before it was rebased on
-the current `main`.  The code pushed here reproduces that binary's fields
+before it was rebased on the current `main` and the deck group was named
+`&production`.  The code pushed here reproduces that binary's fields
 to round-off (5e-15 after 50 steps of three nonlinear decks: no filter,
 sharp, smooth).  The run-time statistics changed their conventions with
 `main` (section 5).

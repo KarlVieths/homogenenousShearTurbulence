@@ -21,6 +21,10 @@
 !   energy  diss  uv  vw
 ! variances_runtime.dat columns:
 !   time  uu  vv  ww  uw
+! damping_runtime.dat (hst_damping active):
+!   time  theta_deg  ncol  energy_damped  power_damped
+!   (ly/2 <u_i u_i> over the damped columns and ly/2 <2 g u_i u_i>, the
+!   power the damping removes; zero for the hard mask)
 ! production_runtime.dat (production filter active), G the filter:
 !   time  ncol  uu_low  vv_low  ww_low  diss_low  uv_G  vw_G  uw_low
 !   (ncol columns with G < 1; <(1 - G) u u> etc. and nu <(1 - G) grad u :
@@ -73,13 +77,14 @@ module hst_stats
   use hst_linsolve, only: line_solve, KIND_DY
   use hst_derivatives, only: s2_of, gamma_y_of
   use hst_stokes, only: stokes_active
+  use hst_damping, only: damping_active, damping_theta, damping_soft_factor, ncol_damped
   use hst_production, only: production_active, ncol_unforced
 
   implicit none
   private
   public :: outstats, open_runtimedata, close_runtimedata, spectrum_write
 
-  integer, parameter :: unit_rt = 121, unit_var = 122, unit_sl = 123, unit_pf = 125
+  integer, parameter :: unit_rt = 121, unit_var = 122, unit_sl = 123, unit_dp = 124, unit_pf = 125
   real(C_DOUBLE), allocatable, save :: exz(:, :), exz_acc(:, :)   ! column energies: device scratch, host sum
   integer, save :: nacc = 0
   real(C_DOUBLE), save :: t_acc0 = 0.0d0
@@ -92,6 +97,7 @@ contains
     if (has_terminal) open (unit=unit_rt, file='statistics/Runtimedata', action='write', position='append')
     if (has_terminal) open (unit=unit_var, file='statistics/variances_runtime.dat', action='write', position='append')
     if (has_terminal .and. stokes_active()) open (unit=unit_sl, file='statistics/stokes_runtime.dat', action='write', position='append')
+    if (has_terminal .and. damping_active()) open (unit=unit_dp, file='statistics/damping_runtime.dat', action='write', position='append')
     if (has_terminal .and. production_active()) &
       open (unit=unit_pf, file='statistics/production_runtime.dat', action='write', position='append')
     allocate (exz(-nz:nz, nx0:nxN), exz_acc(-nz:nz, nx0:nxN))
@@ -103,6 +109,7 @@ contains
     if (has_terminal) close (unit_rt)
     if (has_terminal) close (unit_var)
     if (has_terminal .and. stokes_active()) close (unit_sl)
+    if (has_terminal .and. damping_active()) close (unit_dp)
     if (has_terminal .and. production_active()) close (unit_pf)
     !$omp target exit data map(delete: exz)
     deallocate (exz, exz_acc)
@@ -140,7 +147,7 @@ contains
     integer(C_INT) :: ix, iy, iz, c
     real(C_DOUBLE) :: w, eps, uv, uu, vv, ww, vw, uw, grad, mfx, mfz
     real(C_DOUBLE) :: q_in, q_out, e_in, e_out, g_in, g_out, l_in, l_out
-    real(C_DOUBLE) :: sums(21), q2, qc, inv_ly, ly_w, gl, uul, vvl, wwl, epsl, gradl, uvg, vwg, uwl
+    real(C_DOUBLE) :: sums(24), q2, ed, pd, gsoft, qc, inv_ly, ly_w, gl, uul, vvl, wwl, epsl, gradl, uvg, vwg, uwl
     integer(C_INT) :: inc00         ! 1: the (0,0) column enters the fluctuation (about its box mean)
     complex(C_DOUBLE_COMPLEX) :: cu, cv, cw, dq
     integer :: ierr
@@ -149,13 +156,14 @@ contains
     ! spectral (Parseval) sums over x and z give the horizontal mean via
     ! the mode weight w, and integrating in y gives a box-height integral.
     eps = 0; uv = 0; uu = 0; vv = 0; ww = 0; vw = 0; uw = 0; mfx = 0; mfz = 0
-    q_in = 0; q_out = 0; e_in = 0; e_out = 0
+    q_in = 0; q_out = 0; e_in = 0; e_out = 0; ed = 0; pd = 0
     uul = 0; vvl = 0; wwl = 0; epsl = 0; uvg = 0; vwg = 0; uwl = 0
+    gsoft = damping_soft_factor()
     inc00 = 1
     if (stokes_active()) inc00 = 0         ! the column is the imposed Stokes layer: mean flow
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, k2, dyl, inlayer, gprod, inc00, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz, w, cu, cv, cw, gl) &
-    !$omp reduction(+:eps, uv, uu, vv, ww, vw, uw, mfx, mfz, q_in, q_out, e_in, e_out, uul, vvl, wwl, epsl, uvg, vwg, uwl)
+    !$omp shared(V, k2, dyl, inlayer, gdamp, gprod, gsoft, inc00, nx0, nxN, nz, ny0, nyN) private(ix, iy, iz, w, cu, cv, cw, qc, gl) &
+    !$omp reduction(+:eps, uv, uu, vv, ww, vw, uw, mfx, mfz, q_in, q_out, e_in, e_out, ed, pd, uul, vvl, wwl, epsl, uvg, vwg, uwl)
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = ny0, nyN
@@ -163,6 +171,10 @@ contains
           if (ix == 0 .and. iz == 0) then
             mfx = mfx + dreal(cu)*dyl(iy)
             mfz = mfz + dreal(cw)*dyl(iy)
+            if (gdamp(iz, ix) > 0.0d0) then      ! damped mean profiles (damp_mean)
+              qc = dyl(iy)*dreal(cu*conjg(cu) + cw*conjg(cw))
+              ed = ed + qc; pd = pd + 2.0d0*gsoft*gdamp(iz, ix)*qc
+            end if
             ! second moments of the profiles about their box means: the raw sums here,
             ! the squared box means come off after the reduction (v00 = 0 exactly)
             if (inc00 == 1) then
@@ -178,6 +190,10 @@ contains
           end if
           w = 2.0d0*dyl(iy)
           if (ix == 0) w = dyl(iy)
+          if (gdamp(iz, ix) > 0.0d0) then
+            qc = w*dreal(cu*conjg(cu) + cv*conjg(cv) + cw*conjg(cw))
+            ed = ed + qc; pd = pd + 2.0d0*gsoft*gdamp(iz, ix)*qc
+          end if
           uu = uu + w*dreal(cu*conjg(cu))
           vv = vv + w*dreal(cv*conjg(cv))
           ww = ww + w*dreal(cw*conjg(cw))
@@ -247,12 +263,12 @@ contains
     !$omp target update from(exz)
     exz_acc = exz_acc + exz; nacc = nacc + 1
     ! over the ranks, then back into the named quantities
-    sums = [eps, uv, uu, vv, ww, vw, uw, mfx, mfz, q_in, q_out, e_in, e_out, &
+    sums = [eps, uv, uu, vv, ww, vw, uw, mfx, mfz, q_in, q_out, e_in, e_out, ed, pd, dble(ncol_damped), &
             uul, vvl, wwl, epsl, uvg, vwg, dble(ncol_unforced), uwl]
-    call MPI_Allreduce(MPI_IN_PLACE, sums, 21, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+    call MPI_Allreduce(MPI_IN_PLACE, sums, 24, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
     eps = sums(1); uv = sums(2); uu = sums(3); vv = sums(4); ww = sums(5); vw = sums(6); uw = sums(7)
     mfx = sums(8); mfz = sums(9); q_in = sums(10); q_out = sums(11); e_in = sums(12); e_out = sums(13)
-    uul = sums(14); vvl = sums(15); wwl = sums(16); epsl = sums(17); uvg = sums(18); vwg = sums(19); uwl = sums(21)
+    ed = sums(14); pd = sums(15)
     if (inc00 == 1) then
       ! squared box means off the (0,0) column's raw sums (sum dyl = ly up to round-off)
       ly_w = sum(dyl)
@@ -261,7 +277,7 @@ contains
       uw = uw - mfx*mfz/ly_w
       mean_acc = mean_acc + (mfx*mfx + mfz*mfz)/ly_w
       if (production_active()) then        ! and off the unforced range, which holds the column (G(0) = 0)
-        uul = uul - mfx*mfx/ly_w; wwl = wwl - mfz*mfz/ly_w; uwl = uwl - mfx*mfz/ly_w
+        sums(17) = sums(17) - mfx*mfx/ly_w; sums(19) = sums(19) - mfz*mfz/ly_w; sums(24) = sums(24) - mfx*mfz/ly_w
       end if
     end if
     q2 = uu + vv + ww
@@ -288,9 +304,14 @@ contains
         write (unit_sl, '(5(ES23.15,1X))') time, 0.5d0*q_out/l_out, 0.5d0*q_in/l_in, ni*e_out/l_out, ni*e_in/l_in
         flush (unit_sl)
       end if
+      if (damping_active()) then
+        write (unit_dp, '(2(ES23.15,1X),I8,2(1X,ES23.15))') time, damping_theta(time)*180.0d0/3.141592653589793d0, &
+          nint(sums(16)), 0.5d0*ed, 0.5d0*pd
+        flush (unit_dp)
+      end if
       if (production_active()) then
-        write (unit_pf, '(ES23.15,1X,I8,7(1X,ES23.15))') time, nint(sums(20)), uul*inv_ly, vvl*inv_ly, wwl*inv_ly, &
-          ni*epsl*inv_ly, uvg*inv_ly, vwg*inv_ly, uwl*inv_ly
+        write (unit_pf, '(ES23.15,1X,I8,7(1X,ES23.15))') time, nint(sums(23)), sums(17)*inv_ly, sums(18)*inv_ly, sums(19)*inv_ly, &
+          ni*sums(20)*inv_ly, sums(21)*inv_ly, sums(22)*inv_ly, sums(24)*inv_ly
         flush (unit_pf)
       end if
     end if

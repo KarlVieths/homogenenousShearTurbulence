@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Statistics of the damping campaign in the frame of the mean shear.
+"""Statistics of the campaign in the frame of the mean shear.
 
-   python3 tools/analyse.py [--transient 400] [--block 50]      (from damping_campaign/)
+   python3 tools/analyse.py [--transient 400] [--block 50]      (from the campaign directory)
 
-Every run directory runs/<case>/theta_<deg> (case = n<n>_<mask>) with
+Every run directory runs/<case>/theta_<deg> (case = n<n>_<variant>) with
 output is averaged over t > t_start + transient with the functions of
 honeycomb_campaign/tools/analyse.py (same quantities: q2, eps, S*,
 -<u_par v>/q2, L_eps, Re_lambda, b_par, b_v, b_perp, <u_perp v>/q2, the
 rho's; errors from blocks of --block time units).  The honeycomb rect
 runs are read from its results.csv as the case "n1" (the small box).
 Writes results.csv and angle_dependence.png (--out; --only <regex> keeps
-only the matching cases plus n1, e.g. --only hard --out angle_dependence_hard.png)
+only the matching cases plus n1, e.g. --only prod --out angle_dependence_prod.png)
 and prints, per case, the spread (max - min)/|mean| over theta.
 """
 import argparse, csv, glob, math, os, re, sys
@@ -44,14 +44,14 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--transient', type=float, default=400.0)
     ap.add_argument('--block', type=float, default=50.0)
-    ap.add_argument('--only', default='', help='regex on the case name (e.g. hard): draw only these cases')
+    ap.add_argument('--only', default='', help='regex on the case name (e.g. prod): draw only these cases')
     ap.add_argument('--out', default='angle_dependence.png')
     a = ap.parse_args()
     rows = small_box_rows()
     for d in sorted(glob.glob(os.path.join(HERE, 'runs', '*', 'theta_*'))):
         if not os.path.exists(os.path.join(d, 'Runtimedata')):
             continue
-        # case n<n>_<mask>; a suffix after it (n3_hard_p2: phase-2 angles kept apart on disk) is dropped
+        # case n<n>_<variant>; a suffix after it (n3_hard_p2: phase-2 angles kept apart on disk) is dropped
         case = re.match(r'(?:n\d+|sq[0-9.]+_ly[0-9.]+)_[a-z]+[0-9.]*(?:_edge[0-9.]+)?', os.path.basename(os.path.dirname(d))).group(0)
         m = re.search(r'^\s*ly\s*=\s*([0-9.]+)', open(os.path.join(d, 'hst.in')).read(), re.M)
         hc.LY = float(m.group(1)) if m else 2.0    # the honeycomb analysis assumes ly = 2
@@ -123,8 +123,8 @@ def main():
     for ax in list(axs[2, :len(items) - 10]) + list(axs[1, len(items) - 10:]):
         ax.set_xlabel(r'shear direction $\theta$ [deg]'); ax.tick_params(labelbottom=True)
     axs[0, 0].legend(loc='best', frameon=False)
-    fig.suptitle('Damping campaign: shear-frame statistics vs shear direction, enlarged box n with the small box\'s '
-                 f'ellipse masked (n1 = the small box; averages after S t = {a.transient:g}; open ring: in progress);\n'
+    fig.suptitle('Shear-frame statistics vs shear direction, box enlarged n times '
+                 f'(n1 = the small box; averages after S t = {a.transient:g}; open ring: in progress);\n'
                  r'bottom row: correlation coefficients $\rho_{ij} = \langle u_i u_j\rangle/(u_{i,rms}\, u_{j,rms})$ '
                  r'for $(\parallel, v)$, $(\parallel, \perp)$, $(v, \perp)$')
     fig.tight_layout()

@@ -12,10 +12,8 @@ Copy the block at the end as the opening message of the next session.
   2 pi/sqrt 3, edge 0.3, box 15 x 2 x 5) q2 is independent of the shear
   direction within 3.4 % and the structure within the error bars; the
   sharp filter keeps 7-16 % in the level (lattice rows next to the cutoff).
-- The branch is rebased on `main` 85d9cfe and removes the large-scale
-  damping of session 16 (`src/hst_damping.f90`, `DAMPING.md`, `&damping`),
-  which the filter replaces; the references to DAMPING.md below and in
-  FINDINGS.md point to `main` up to that commit.
+- The branch is rebased on `main` 85d9cfe; the large-scale damping of
+  session 16 (`&damping`) is unchanged and independent of the filter.
 - Open: the square, taller box (10.5 x 2 sqrt 3 x 10.5, smooth edge; HoreKA
   job 5240934 running at the time of the push), angles above 45 deg, an
   unsteady shear direction with the filter (`doc/production_filter.md`

@@ -1,5 +1,5 @@
 #!/bin/bash
-# HoreKA (damping campaign): up to four campaign runs on one A100 node, one per GPU, concurrently.
+# HoreKA: up to four campaign runs on one A100 node, one per GPU, concurrently.
 #
 #   cd $CAMP && sbatch --export=ALL,RUNS="runs/hex3/theta_15.0 runs/rect/theta_15.0 ..." --time=02:00:00 tools/horeka_group.slurm
 #
@@ -24,7 +24,7 @@ CAMP=$(cd "$SLURM_SUBMIT_DIR" && pwd)
 EXE=${EXE:-$CAMP/bin/hst-a100}
 MARGIN=${MARGIN:-300}
 [ -z "$RUNS" ] && { echo "RUNS must be set"; exit 1; }
-source $HOME/hst-damping/env/horeka.sh gpu > /dev/null 2>&1
+source $HOME/hst/env/horeka.sh gpu > /dev/null 2>&1
 
 limit=$(squeue -h -j $SLURM_JOB_ID -o %l)
 days=0; case "$limit" in *-*) days=${limit%%-*}; limit=${limit#*-};; esac
