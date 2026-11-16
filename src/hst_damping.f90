@@ -1,4 +1,4 @@
-! Large-scale damping (DAMPING.md).
+! Large-scale damping (doc.damping/DAMPING.md).
 !
 ! A body force -g(kx, kz) u on the Fourier columns inside a region of the
 ! x-z wavenumber plane defined in the shear frame: with e_par the direction

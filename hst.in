@@ -59,7 +59,7 @@
   tg_mode = 1                    ! positive mode number in x, y and z
 /
 
-! Optional large-scale damping (DAMPING.md): a body force -g u on the x-z Fourier columns inside
+! Optional large-scale damping (doc.damping/DAMPING.md): a body force -g u on the x-z Fourier columns inside
 ! r = ((|k_par|/damp_kpar)^p + (|k_perp|/damp_kperp)^p)^(1/p) < 1 of the shear frame (both semi-axes > 0: on)
 !&damping
 !  damp_kpar = 2.0943951023931953  damp_kperp = 6.283185307179586   ! semi-axes along / across the shear
@@ -72,7 +72,7 @@
 !  damp_angle = 0.0
 !/
 
-! Optional production filter (doc/production_filter.md): the mean shear produces energy only in the x-z Fourier
+! Optional production filter (doc.production/production_filter.md): the mean shear produces energy only in the x-z Fourier
 ! columns with k_h = sqrt(kx^2 + kz^2) >= prod_kc; no mode is damped, nothing depends on the shear direction
 !&production
 !  prod_kc = 3.6275987284684357    ! cutoff (0 = off); 2 pi/sqrt 3: wavelength sqrt 3, whose square is the area of the 3 x 1 box

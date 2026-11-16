@@ -15,10 +15,10 @@ optionally with an unsteady spanwise component `W = S2(t)*y`
 (an oscillating spanwise profile at mid-box driven by its body force, the
 `SLdata.cpl` model, on a grid clustered at mid-box with `ystretch`),
 optionally with a large-scale damping of the Fourier columns inside an
-ellipse of the shear frame (the `&damping` group, [DAMPING.md](DAMPING.md):
+ellipse of the shear frame (the `&damping` group, [doc.damping/DAMPING.md](doc.damping/DAMPING.md):
 an enlarged box that keeps the length scale of a small one), or with a
 production filter (the `&production` group,
-[doc/production_filter.md](doc/production_filter.md): the mean shear
+[doc.production/production_filter.md](doc.production/production_filter.md): the mean shear
 produces energy only in the Fourier columns with `sqrt(kx^2 + kz^2) >=
 prod_kc`, sharply or through a smooth edge, which sets a length scale
 that does not depend on the direction of the shear), in a
@@ -375,8 +375,8 @@ snapshots at 19-29 s each.
 | machines | istmio2, istmcetus, istmcorax (RTX 3060 / A6000 / RTX 5090), HoreKA (4 x A100 per node) |
 | NCCL transport | done, `make GPU=1 NCCL=1`, deck parameter `transport` (FINDINGS.md) |
 | y decomposition | merged into `main` in session 11 (tags `xz-parallel` before, `xyz-parallel` after; DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.33x (256^3) and 1.79x (512^3) one node (FINDINGS.md); `npy = 0` (default) lets the code choose: one slab per node |
-| large-scale damping | merged from `damping_from_main` (DAMPING.md): `&damping` masks the x-z columns inside an ellipse of the shear frame, so a box enlarged n times keeps the small box's length scale at any shear direction; hard mask (Galerkin truncation) or soft rate; campaign n = 2..5 at four angles: the structure (S*, b_ij, correlations) is angle independent from n = 3 on, the level follows the lattice count near the ellipse (1/n) |
-| production filter | `&production` (`prod_kc`, `prod_edge`), `src/hst_production.f90`, [doc/production_filter.md](doc/production_filter.md): with a smooth edge the statistics of a 15 x 2 x 5 box are independent of the shear direction within 3 % in the level and 0.002 in the anisotropy; decks of the campaign in `doc/assets/campaign/` |
+| large-scale damping | merged from `damping_from_main` (doc.damping/DAMPING.md): `&damping` masks the x-z columns inside an ellipse of the shear frame, so a box enlarged n times keeps the small box's length scale at any shear direction; hard mask (Galerkin truncation) or soft rate; campaign n = 2..5 at four angles: the structure (S*, b_ij, correlations) is angle independent from n = 3 on, the level follows the lattice count near the ellipse (1/n) |
+| production filter | `&production` (`prod_kc`, `prod_edge`), `src/hst_production.f90`, [doc.production/production_filter.md](doc.production/production_filter.md): with a smooth edge the statistics of a 15 x 2 x 5 box are independent of the shear direction within 3 % in the level and 0.002 in the anisotropy; decks of the campaign in `doc.production/assets/campaign/` |
 | safety net | `tests/run_tests.sh` (22 runs, three of them the damping and four the production-filter Kelvin modes) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
 
 ## Layout
@@ -393,7 +393,7 @@ src/hst_initial.f90      seeded initial field
 src/hst_io.f90           restart and snapshot files
 src/hst_derivatives.f90  compact stencils, shear-periodic ghost rows
 src/hst_linsolve.f90     cyclic pentadiagonal solves, one thread per mode, rows built on the fly, real factor
-src/hst_production.f90   the production filter G(k_h) (doc/production_filter.md)
+src/hst_production.f90   the production filter G(k_h) (doc.production/production_filter.md)
 src/hst_equations.f90    the equations and one RK step
 src/hst_stats.f90        statistics/Runtimedata and the other run-time files
 src/hst_pressure.f90     pressure at snapshot times
@@ -402,5 +402,6 @@ src/postpro/postpro.f90  post-processing: plane statistics, spectra and budgets 
 tests/                   test programs on tests/test_common.f90, decks, runner, regression, field comparison
 env/, jobs/              environment scripts and SLURM jobs
 examples/                benchmark decks
-doc/                     the production filter: report, figures, and the decks, results and scripts of its campaign (doc/assets/campaign/)
+doc.production/          the production filter: report, figures, and the decks, results and scripts of its campaign (assets/campaign/)
+doc.damping/             the large-scale damping: DAMPING.md, and the decks, figures and result tables of its campaign (assets/)
 ```

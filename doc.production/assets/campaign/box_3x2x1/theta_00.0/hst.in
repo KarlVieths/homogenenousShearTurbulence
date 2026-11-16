@@ -1,0 +1,55 @@
+! unfiltered 3 x 2 x 1 box, shear direction theta = 0 deg from x (doc.production/production_filter.md)
+! hst input deck.  Fortran namelist; a line starting with ! is a comment.
+! Box of Sekimoto, Dong & Jimenez (2016): Lx:Ly:Lz = 3:2:1, mean flow U = S*y.
+! Modes stored: 0..nx in x, -nz..nz in z; ny uniform points in y over ly.
+! At Re = 1000 this grid gives dx/eta = 2, dy/eta = 1, dz/eta = 0.3 in the
+! stationary state; for a production run take nx = 191, nz = 63, ny = 128.
+
+&mesh
+  nx = 48, ny = 95, nz = 24
+  alfa0 = 2.0943951023931953    ! 2*pi/lx, lx = 3.000000
+  beta0 = 6.2831853071795862    ! 2*pi/lz, lz = 1.000000
+  ly = 2.0
+  ystretch = 0.0                ! tanh clustering of the y points at mid-box (0 = uniform)
+  line_chunk = 0                ! x columns per line-solver batch (0 = all on the GPU, 16 on the CPU)
+  transport = 'auto'            ! alltoall transport: 'nccl' if built with NCCL=1 and one GPU per rank, else 'mpi'
+  npy = 0                       ! y slabs: 0 = the code chooses (1 here; one per node on the branch multinode-y, nproc = npxz * npy)
+/
+
+&physics
+  re = 1000.0                   ! 1/nu
+  S = 1.0000000000000000    ! dU/dy = cos(theta), theta = 0.0 deg
+  linear = .false.              ! .true. drops the nonlinear terms (tests)
+  exact_shift = .true.          ! .true.: advect unweighted quantities, removes a dy^2 error (FINDINGS.md)
+  s2_amplitude = 0.0000000000000000            ! unsteady spanwise shear dW/dy = S2(t): amplitude (0 = off),
+  s2_period = 0.0               !   period of S2 = A sin(2 pi (t - start)/period) (0 = constant A),
+  s2_start = 0.0                !   time at which it switches on
+  sl_amplitude = 0.0            ! Stokes layer at mid-box (0 = off): W = A exp(-s) cos(2 pi (t - t0)/T - s),
+  sl_period = 1.0               !   s = |y - ly/2|/delta; needs ystretch > 0 to resolve delta
+  sl_delta = 0.02
+  sl_start = 0.0
+  sl_bodyforce = .true.         ! drive it by its body force (else prescribe the profile)
+  sl_ramp = .false.             ! cubic ramp over the first period instead of a hard switch-on
+/
+
+&time_control
+  deltat = 0.0                  ! 0: choose from cflmax every step
+  cflmax = 0.7
+  t_max = 2040.0
+  nstep = 1000000
+  wall_max = 0.0                ! stop after this many seconds of wall-clock time and write the restart file (0 = never)
+  dt_stat = 0.01                ! Runtimedata interval
+  dt_field = 200.0               ! Dati.cart.<i>.out snapshot interval
+  dt_save = 20.0                ! Dati.cart.out restart interval
+  time = 0.0                    ! start time when not restarting
+  time_from_restart = .false.
+                                    ! (e.g. 'Dati.cart.in.Re2000'); the code always
+                                    ! writes its live checkpoint to Dati.cart.out
+  timing = .false.              ! .true.: print the time per phase of the substep at the end
+/
+
+&init
+  amplitude = 0.003             ! scales the random vector potential: 0.003 at kpeak = 8 gives q2 = 0.12 (0.05 gives 32),
+  seed = 1                      !   about the stationary value; 1e-3 at kpeak = 4 (q2 = 4e-4) decays without transition (FINDINGS.md)
+  kpeak = 8.0                   ! wavenumber of the initial spectrum peak
+/

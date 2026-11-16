@@ -8,7 +8,7 @@ Copy the block at the end as the opening message of the next session.
   shear produces only in the columns with sqrt(kx^2 + kz^2) >= prod_kc, a
   step or a smoothstep; no mode is damped and nothing depends on the shear
   direction.  Report, figures, decks, results and scripts:
-  `doc/production_filter.md`, `doc/assets/`.  With the smooth edge (k_c =
+  `doc.production/production_filter.md`, `doc.production/assets/`.  With the smooth edge (k_c =
   2 pi/sqrt 3, edge 0.3, box 15 x 2 x 5) q2 is independent of the shear
   direction within 3.4 % and the structure within the error bars; the
   sharp filter keeps 7-16 % in the level (lattice rows next to the cutoff).
@@ -16,12 +16,12 @@ Copy the block at the end as the opening message of the next session.
   session 16 (`&damping`) is unchanged and independent of the filter.
 - Open: the square, taller box (10.5 x 2 sqrt 3 x 10.5, smooth edge; HoreKA
   job 5240934 running at the time of the push), angles above 45 deg, an
-  unsteady shear direction with the filter (`doc/production_filter.md`
+  unsteady shear direction with the filter (`doc.production/production_filter.md`
   section 6).
 
 ## Session 16 (2026-11-06 to 08): large-scale damping, merged into main
 
-- The branch `damping_from_main` (DAMPING.md) added `src/hst_damping.f90`
+- The branch `damping_from_main` (doc.damping/DAMPING.md) added `src/hst_damping.f90`
   and the `&damping` deck group: a body force (hard mask or soft rate) on
   the x-z Fourier columns inside an ellipse of the shear frame, so that a
   box enlarged n times in x and z keeps the small box's length scale at
@@ -31,7 +31,7 @@ Copy the block at the end as the opening message of the next session.
   log): n = 2..5, four angles each, hard mask, plus soft rates 1, 3, 10 at
   n = 3; all at S t = 1400 on HoreKA (bin/hst-a100, `tools/horeka_group.slurm`,
   self-contained jobs because the login nodes' Lustre clients wedge).
-  Result (DAMPING.md section 4): the structure (S* 6.2-6.3, -<u_par v>/q2
+  Result (doc.damping/DAMPING.md section 4): the structure (S* 6.2-6.3, -<u_par v>/q2
   0.16, b_ij, rho_ij) is angle independent within 2 % from n = 3 on and
   equals the small box at theta = 0; the level (q2, eps at fixed S*)
   still varies by 8-20 % and follows the number of lattice columns just
@@ -43,7 +43,7 @@ Copy the block at the end as the opening message of the next session.
   6.30, b_ij within 0.002: the level spread is 1 % (17 % at n = 5), as
   the lattice count in the band r < 1.1 predicts (66-70 columns at all
   angles).  Open: the swinging shear with the ellipse following it
-  (DAMPING.md section 1).
+  (doc.damping/DAMPING.md section 1).
   The branches `feature_honeycomb_from_main` (HONEYCOMB.md) and
   `feature_rotating_shear` (ROTATING.md) stay unmerged.
 

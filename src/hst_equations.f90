@@ -15,7 +15,7 @@
 ! -g d2v and -g eta, explicit like the tilting term; with the hard mask the
 ! masked columns' right-hand sides are dropped instead (damping_mask).
 ! With the production filter G(alfa, beta) (hst_production,
-! doc/production_filter.md) the
+! doc.production/production_filter.md) the
 ! production term -v (S, 0, S2) of the momentum equation is multiplied by
 ! G: the lift-up term of eta becomes G (S2 i alfa - S i beta) D0 v and d2v
 ! gets -(1 - G) (i alfa S + i beta S2) D1 v (without the filter the

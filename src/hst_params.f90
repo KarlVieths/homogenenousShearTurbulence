@@ -42,12 +42,12 @@ module hst_params
   real(C_DOUBLE), save :: sl_amplitude, sl_period, sl_delta, sl_start
   logical, save :: sl_bodyforce, sl_ramp
   !$omp declare target(ni, S)
-  ! large-scale damping (hst_damping, DAMPING.md): a body force -gdamp(kx, kz) u on the
+  ! large-scale damping (hst_damping, doc.damping/DAMPING.md): a body force -gdamp(kx, kz) u on the
   ! columns inside the region r < 1 of the shear frame, r = ((|k_par|/damp_kpar)^p +
   ! (|k_perp|/damp_kperp)^p)^(1/p), p = damp_norm (2: ellipse).  damp_kpar = 0: off.
   real(C_DOUBLE), save :: damp_kpar, damp_kperp, damp_rate, damp_edge, damp_norm, damp_angle
   logical, save :: damp_hard, damp_mean, damp_follow
-  ! production filter (hst_production, doc/production_filter.md): the mean shear produces only in the columns with
+  ! production filter (hst_production, doc.production/production_filter.md): the mean shear produces only in the columns with
   ! |k_h| = sqrt(kx^2 + kz^2) >= prod_kc (smoothstep from 0 to 1 over prod_kc (1 -+ prod_edge)).  0: off.
   real(C_DOUBLE), save :: prod_kc, prod_edge
 

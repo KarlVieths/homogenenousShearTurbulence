@@ -1,4 +1,4 @@
-! Production filter (doc/production_filter.md).
+! Production filter (doc.production/production_filter.md).
 !
 ! No mode is removed or damped; the mean shear produces energy only at the
 ! smaller scales of the x-z plane.  The production term -v (S, 0, S2) of

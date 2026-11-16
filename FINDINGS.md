@@ -1778,7 +1778,7 @@ for `(0,0)` and returns zero), so `vv`, `uv`, `vw` were not affected.  `uu`,
 `ww`, `uw`, `energy` and `diss` (`nu <(d_y u00)^2 + (d_y w00)^2>`, whose
 y-derivative loop also skipped the column) were low, and the column energy
 `E(0,0)` of `spectra/exz<i>.dat` was the other way round, raw with the box
-mean in it.  Size: `DAMPING.md` section 4 gives 1-2 % of the energy in the
+mean in it.  Size: `doc.damping/DAMPING.md` section 4 gives 1-2 % of the energy in the
 `(0,0)` column in stationary hard-mask runs; in the transient of the small
 deck (`tests/decks/small.in` to t = 1, Re 200) `uu` was 2.5 % (t = 0.5) and
 5.5 % (t = 1) low, `ww` 2.5 % and 11 % (the column is zero at the random
@@ -1800,7 +1800,7 @@ the host.  Where the old definition is kept: with a Stokes layer
 (`stokes_active`) the `(0,0)` column is the imposed, phase-locked,
 y-inhomogeneous mean flow, so the column stays out as a whole (and the
 y-average is not its mean); `inc00` in `outstats`.  The large-scale damping
-(`DAMPING.md`) does not change the picture: the `(0,0)` column is exempt from
+(`doc.damping/DAMPING.md`) does not change the picture: the `(0,0)` column is exempt from
 the mask unless `damp_mean` is set, so with the default the column is alive
 and the difference is the same; with `damp_mean` and the hard mask it is
 zero and both operators coincide.
@@ -1823,7 +1823,7 @@ written before this change are not comparable with the new ones for `uu`,
 `ww`, `uw`, `energy`, `diss`, `E(0,0)` (a few percent, more in transients);
 `vv`, `uv`, `vw` are identical.  `src/postpro/postpro.f90` (the Fortran
 post-processor) took the same old operator and is changed below.  The
-statistics of the damping campaign (`DAMPING.md` section 4: q2, eps, b_ij)
+statistics of the damping campaign (`doc.damping/DAMPING.md` section 4: q2, eps, b_ij)
 come from the old definition and carry that bias: it is common to all n and
 angles, so the comparisons among them stand, but the absolute q2 is low by
 the (0,0) share.
