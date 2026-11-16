@@ -11,10 +11,8 @@
 !   d/dt eta = ni (D2 - k2 D0) eta            + nonlinear terms + (S2 i alfa - S i beta) D0 v
 !
 ! with the optional unsteady spanwise mean shear W = S2(t) y (S2data.cpl),
-! and the optional large-scale damping -g(alfa, beta) u (hst_damping):
-! -g d2v and -g eta, explicit like the tilting term; with the hard mask the
-! masked columns' right-hand sides are dropped instead (damping_mask).
-! With the production filter G(alfa, beta) (hst_damping, PRODUCTION.md) the
+! With the production filter G(alfa, beta) (hst_production,
+! doc/production_filter.md) the
 ! production term -v (S, 0, S2) of the momentum equation is multiplied by
 ! G: the lift-up term of eta becomes G (S2 i alfa - S i beta) D0 v and d2v
 ! gets -(1 - G) (i alfa S + i beta S2) D1 v (without the filter the
@@ -39,7 +37,6 @@ module hst_equations
   use hst_params
   use hst_derivatives, only: fill_ghosts, fill_ghosts_field, shear_shifts, s2_of, s2_integral
   use hst_stokes, only: stokes_active, stokes_force, stokes_apply
-  use hst_damping, only: damping_active, damping_update, damping_mask, damping_soft_factor
   use hst_linsolve, only: line_solve, KIND_D2V, KIND_ETA, KIND_D0, KIND_DY
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral, compute_cfl
@@ -66,7 +63,6 @@ contains
       if (.not. linear .or. i == 3) call transform_to_physical()
       if (i == 3) call compute_cfl()
       call toc(T_TRANSFORM)
-      if (damping_active()) call damping_update(time)
       call buildrhs_prepare(RK_rai(:, i))
       call toc(T_PREPARE)
       if (.not. linear) then
@@ -76,7 +72,6 @@ contains
           call buildrhs(RK_rai(:, i), m)
         end do
       end if
-      if (damp_hard .and. damping_active()) call damping_mask()
       call toc(T_PRODUCTS)
       dt_sub = 2.0d0/RK_rai(1, i)*deltat
       call shear_shift(dt_sub)
@@ -98,18 +93,16 @@ contains
     real(C_DOUBLE), intent(in) :: ODE(3)
     integer(C_INT) :: ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: unkn, impl, expl, f, dv
-    real(C_DOUBLE) :: helm, biharm, s2now, force, g, gsoft, gp
+    real(C_DOUBLE) :: helm, biharm, s2now, force, gp
 
     s2now = s2_of(time)
-    gsoft = damping_soft_factor()
     call stokes_force(time)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, rhs, oldrhs, der, k2, ialfa, ibeta, gdamp, gprod, ni, S, s2now, gsoft, fy, deltat, ODE, nx0, nxN, nz, ny0, nyN) &
-    !$omp private(ix, iy, iz, j, unkn, impl, expl, f, dv, helm, biharm, force, g, gp)
+    !$omp shared(V, rhs, oldrhs, der, k2, ialfa, ibeta, gprod, ni, S, s2now, fy, deltat, ODE, nx0, nxN, nz, ny0, nyN) &
+    !$omp private(ix, iy, iz, j, unkn, impl, expl, f, dv, helm, biharm, force, gp)
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = ny0, nyN
-          g = gsoft*gdamp(iz, ix)          ! large-scale damping rate of the column (soft only)
           gp = gprod(iz, ix)               ! production filter of the column (1: unfiltered)
           ! v equation
           unkn = 0.0d0; impl = 0.0d0; dv = 0.0d0
@@ -120,7 +113,7 @@ contains
             impl = impl + ni*biharm*V(iy + j, iz, ix, 2)
             dv = dv + der(iy, 1, j)*V(iy + j, iz, ix, 2)
           end do
-          expl = -g*unkn - (1.0d0 - gp)*(S*ialfa(ix) + s2now*ibeta(iz))*dv     ! damping; production removed from the column
+          expl = -(1.0d0 - gp)*(S*ialfa(ix) + s2now*ibeta(iz))*dv     ! production removed from the column (zero when unfiltered)
           rhs(iy, iz, ix, 2) = ODE(1)*unkn/deltat + impl - ODE(3)*oldrhs(iy, iz, ix, 2) + ODE(2)*expl
           oldrhs(iy, iz, ix, 2) = expl
           ! eta equation (mean mode: u and w packed as one complex number)
@@ -140,7 +133,6 @@ contains
             expl = expl + gp*(s2now*ialfa(ix) - S*ibeta(iz))*der(iy, 0, j)*V(iy + j, iz, ix, 2)   ! tilting of the mean vorticity
           end do
           if (ix == 0 .and. iz == 0) expl = expl + dcmplx(0.0d0, force)
-          expl = expl - g*unkn                     ! large-scale damping of eta (mean column: of u, w)
           rhs(iy, iz, ix, 1) = ODE(1)*unkn/deltat + impl - ODE(3)*oldrhs(iy, iz, ix, 1) + ODE(2)*expl
           oldrhs(iy, iz, ix, 1) = expl
         end do

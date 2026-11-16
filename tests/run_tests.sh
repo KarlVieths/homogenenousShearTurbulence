@@ -28,9 +28,6 @@ run 1     test_kelvin kelvin_s2const.in
 run 1     test_kelvin kelvin_s2osc.in
 run 1     test_kelvin kelvin_s2mean.in
 run 1     test_kelvin kelvin_stretched.in
-run 1     test_kelvin kelvin_damped.in
-run 1     test_kelvin kelvin_hard.in
-run 1     test_kelvin kelvin_outside.in
 run 1     test_kelvin kelvin_unforced.in
 run 1     test_kelvin kelvin_unforced_s2.in
 run 1     test_kelvin kelvin_halfforced.in
