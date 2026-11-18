@@ -1,0 +1,6 @@
+# run output (decks runs/*/theta_*/hst.in are kept)
+logs/*
+!logs/.gitkeep
+test/
+runs/*/theta_*/*
+!runs/*/theta_*/hst.in

@@ -304,10 +304,11 @@ contains
     f(5) = 0.0d0
     if (gp == 0.0d0) f(5) = maxval(abs(enrg - e0e2))/maxval(e0e2)
     f(6) = maxval(abs(gcode - gex))
-    if (last .and. len_trim(csv) > 0) call write_csv()
+    if (last .and. len_trim(csv) > 0) call write_csv(dt)
   end subroutine run_level
 
-  subroutine write_csv()
+  subroutine write_csv(dt)
+    real(C_DOUBLE), intent(in) :: dt
     integer :: unit, m
     open (newunit=unit, file=trim(csv), status='replace', action='write')
     write (unit, '(A)') '# test_kelvin_s2: numerical amplitudes of one Kelvin column (kelvin_ref.py --compare reads this header)'
@@ -324,10 +325,10 @@ contains
     write (unit, '(A,ES24.16)') '# t0 = ', t0
     write (unit, '(A,2ES24.16)') '# v0 = ', v0
     write (unit, '(A,2ES24.16)') '# eta0 = ', eta0
-    write (unit, '(A)') 't,S2,gamma_code,ky,Re_v,Im_v,Re_eta,Im_eta,energy,res_v,res_eta'
+    write (unit, '(A)') 't,S2,gamma_code,ky,Re_v,Im_v,Re_eta,Im_eta,energy,res_v,res_eta,dt'
     do m = 0, nout
-      write (unit, '(ES24.16,10(",",ES24.16))') tt(m), s2v(m), gcode(m), kyv(m), real(vnum(m)), aimag(vnum(m)), &
-        real(etanum(m)), aimag(etanum(m)), enrg(m), resv(m), reseta(m)
+      write (unit, '(ES24.16,11(",",ES24.16))') tt(m), s2v(m), gcode(m), kyv(m), real(vnum(m)), aimag(vnum(m)), &
+        real(etanum(m)), aimag(etanum(m)), enrg(m), resv(m), reseta(m), dt
     end do
     close (unit)
   end subroutine write_csv

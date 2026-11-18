@@ -114,6 +114,13 @@ class Mode:
         return u, v, w
 
 
+def closed_form(t, kx, ky0, kz, G, S, A, omega, nu, v0, eta0):
+    """(v, eta, energy) of the column at the sorted times t (t[0] = 0), for S2 = A sin(omega t);
+    the call used by kelvin_checks.py."""
+    return tuple(Mode(kx, kz, ky0, G, S, A, 2 * np.pi / omega, nu, v0, eta0).series(t)[k]
+                 for k in ('v', 'eta', 'energy'))
+
+
 def errors(ref, v, eta, energy):
     """Errors in v, eta, energy relative to the largest reference amplitude."""
     return (np.max(np.abs(v - ref['v'])) / np.max(np.abs(ref['v'])),

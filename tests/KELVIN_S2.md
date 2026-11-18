@@ -62,7 +62,7 @@ the 15 x 2 x 5 box (nx = nz = 1, ny = 128).  For k_x = 0 the Hermitian partner
   closed form, to 1e-10.
 
 Errors in v, eta, energy are relative to the largest reference amplitude of
-the run; the pass limit is `tol` (1e-5), the projection residual 1e-8.
+the run; the pass limit is `tol` (1e-5), the same for the projection residual.
 `refine = r` repeats the run at deltat/2, ..., deltat/2^r and prints the
 observed order; `order_min` makes it a criterion (1.6).
 
@@ -144,3 +144,30 @@ coarsest step.
   periods at deltat = 0.025: with nu = 1e-3 the time error is second order.
   The decks guard against bugs (all of the above are at 1e-3 or more), not
   against discretisation changes below 1e-5.
+
+## Order test and seeded-bug audit (2026-11-17)
+
+`tests/kelvin_checks.py` (`order`, `margin`).  Seeded-bug audit: the 9 bugs
+above plus B9 (S2 at the step midpoint, an order-2 error), each against all
+26 Kelvin decks at the suite's own time step; the correct solver fails none.
+Every bug fails at least 5 decks.  Margin = largest error/tolerance:
+
+| bug | margin | detecting deck |
+|---|---|---|
+| gamma_period, gamma_sign, extra_v_missing, extra_v_no_s2, shift_s2_lag, inconsistent_s2, B1 (S2 at step start), eta_s2_sign | 1e4 and up | various |
+| **B9 (S2 at step midpoint)** | **5.0, fragile** | order_b_Gh; 4.8e-5 against 1e-5 in `a_G0`, 5.9e-6 (missed) in `a_G0_slow`, 1.2e-7 (invisible) in `a_G1` |
+
+Headroom of the correct solver (tolerance/error) is 3.4 to 6 in the G = 0
+decks (energy) and larger elsewhere; the old `kelvin.in` has 2.8.  Per-deck
+tolerances of 3 x error would give B9 a margin of 17-22 in `a_G0_inviscid`,
+`a_Gh_fast`, `b_G0_fast`, `b_Gh_start` and leave 5-6 or less elsewhere.  Results
+and conclusions in `tests/KELVIN_S2_AUDIT.md`.
+
+The order test with the case of the addendum (k_x = 0, G = 1, S T = 1.75,
+nu = 1e-12, v only) does not work for this code: the error of v does not depend
+on deltat (2.1e-8 at deltat = T/32, T/64, T/128: the spatial floor; 1.4e-8 at
+ny = 128 and T/8 to T/128 alike), because for k_x = 0 and G = 1 S2 enters v only
+through the exact shear shift, with no explicit term.  The correct solver fails
+(order 0.00) and so do B1 and B9 with the same numbers.  With G = 0 (the extra d2v
+term makes v depend on S2 explicitly) it works: correct 3.23 (PASS), B1 0.99,
+B9 2.00 (FAIL).  eta and the energy of the G = 1 case converge at order 3.0.

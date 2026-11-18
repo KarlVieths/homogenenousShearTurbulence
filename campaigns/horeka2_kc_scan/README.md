@@ -1,0 +1,98 @@
+# Campaign: production filter at k_c = 2 pi/3 and 2 pi, four shear directions, HoreKA2
+
+8 runs, each on one GPU: the smooth production filter (edge 0.3) at two
+cutoffs, shear direction theta = 0, 15, 30, 45 deg.  Everything else is
+fixed and is that of the campaign of `doc.production/production_filter.md`
+(`filter_smooth_kc3.63`): box 15 x 2 x 5, grid 240 x 95 x 120, Re = 1000,
+S t = 1400, random initial field (amplitude 6e-4, kpeak 8, seed 1).
+
+| case | k_c | forced where |
+|---|---|---|
+| `runs/smooth_kc2.09/` | 2 pi/3 = 2.094 | k_h >= 0.7 k_c ... 1.3 k_c (G from 0 to 1) |
+| `runs/smooth_kc6.28/` | 2 pi   = 6.283 | the same |
+
+`runs/<case>/theta_<deg>/hst.in` are the decks, written by `make_runs.py`
+from `template.in` (only `S = cos theta`, `s2_amplitude = sin theta`,
+`prod_kc` and the header differ from the 3.63 deck of the earlier campaign).
+
+## Files
+
+| file | what |
+|---|---|
+| `template.in` | the deck with placeholders |
+| `make_runs.py` | writes `runs/*/theta_*/hst.in`; the cases, angles, edge and initial condition (`CASES`) are at its top |
+| `horeka2_group.slurm` | the job: four runs on one node, one per GPU (details in its header) |
+| `submit.sh` | submits one job per case, or a short test |
+| `status.sh` | state, time reached and s/step of every run |
+
+## Steps
+
+1. **Build** on a login node, in the repository (this is `compile-horeka2.sh`
+   at the repository root; it has not run successfully on HoreKA2 yet, see
+   `env/horeka2.sh`):
+
+        cd ~/hst && ./compile-horeka2.sh
+
+   The job picks `build-gpu-h100/hst` on H100/H200 (cc90) and
+   `build-gpu-b200/hst` on B200 (cc100) from the GPU it runs on.
+
+2. **Copy this directory to the workspace** (a few GB per run) and work there:
+
+        cp -r ~/hst/campaigns/horeka2_kc_scan <workspace>/kc_scan && cd <workspace>/kc_scan
+
+3. **Test** (8 minutes, one case, four angles at once):
+
+        export HST_ACCOUNT=<project account>  HST_PARTITION=<GPU partition>
+        export HST_TEST_PARTITION=<development partition>    # optional
+        ./submit.sh test
+
+   Afterwards `./status.sh test` and `grep s/step test/*/theta_*/run-*.log | tail`
+   give the speed (A100: 0.079 s/step for this box; the whole run is 220 000
+   steps).  Check that the four logs show four different GPUs working
+   (`nvidia-smi` in the job log) and no MPI errors.  If `mpirun -np 1` does
+   not start inside the allocation, submit with `LAUNCH= ./submit.sh test`
+   (the binary then runs directly, as one MPI process).
+
+4. **Run**:
+
+        export TIME=<limit>        # default 06:00:00; at most what the partition allows
+        ./submit.sh
+
+   Two jobs, one per case.  A run that the time limit stops writes
+   `Dati.cart.out` (restart every 20 time units and at the end) and is
+   marked `INCOMPLETE`; the job then submits a follow-up job for those runs,
+   which resume from it (up to 10 jobs in a chain, `MAXSEG`).  A run that
+   ends otherwise is marked `FAILED` and is not resubmitted.  `./status.sh`
+   shows the state at any time; `scancel` the pending job to stop a chain.
+
+5. **Results** are in each run directory: `statistics/Runtimedata`,
+   `statistics/variances_runtime.dat`, `statistics/production_runtime.dat`,
+   column spectra `statistics/spectra/exz<i>.dat` and snapshots
+   `fields/field<i>.fld` every 200 time units (columns of the files:
+   `src/hst_stats.f90`).  The analysis scripts of the earlier campaign are in
+   `doc.production/assets/campaign/tools/` and need adapting to the layout
+   (see the README there).
+
+## Things to know
+
+* **Initial condition.**  The decks start from the code's random field.  If
+  a case needs a different one to stay turbulent (you found that
+  relaminarisation depended on it), set `amplitude`, `kpeak` or `seed` for
+  that case in `CASES` in `make_runs.py` and rerun it; or put a
+  `Dati.cart.out` from a turbulent field into the run directory before the
+  first job (the run then resumes from it, with `time_from_restart = .true.`
+  taking the time from the file).
+* **Resubmitting a finished run is safe**: runs marked `DONE` are skipped.
+  To rerun one from scratch remove its run directory contents except `hst.in`.
+* **The restart files and statistics are appended**, never truncated; after a
+  crash that left a `Dati.cart.out` the next job continues from it and
+  `Runtimedata` then has the lines of the lost interval twice (about 20 time
+  units at most), which the analysis should drop.
+* **Not verified on HoreKA2**: module names and MPI of `env/horeka2.sh`, the
+  Slurm account/partition names, `--gres=gpu:4`, `--cpus-per-task=8` (change
+  the header of `horeka2_group.slurm` if the node does not have 4 x 8 cores
+  to give), and the time limit of the partitions.  `HST_GPUS=gpu:h100:4`-style
+  GRES strings can be given to `submit.sh` if the cluster needs them.
+* On a node with 8 GPUs (B200) `HST_GPUS=gpu:8` and `--ntasks-per-node=8` in
+  the script header would allow all four angles of both cases (8 runs) in one
+  job; `submit.sh` as written submits one job per case.
