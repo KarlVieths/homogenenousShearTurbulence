@@ -73,7 +73,8 @@ for r in $RUNS; do
   sed -i "s/wall_max = [0-9.eE+-]*/wall_max = $wall/" $d/hst.in
   grep -q "wall_max = $wall" $d/hst.in || { echo "$d/hst.in has no 'wall_max = <value>'"; exit 1; }
   if [ -f $d/Dati.cart.out ]; then
-    sed -i 's/time_from_restart = \.false\./time_from_restart = .true./' $d/hst.in
+    sed -i -e 's/time_from_restart = \.false\./time_from_restart = .true./' \
+           -e "s/restart_file = '[^']*'/restart_file = 'Dati.cart.out'/" $d/hst.in
     echo "GPU $i: resume $r ($(stat -c %y $d/Dati.cart.out | cut -c1-19))"
   else
     echo "GPU $i: start  $r"

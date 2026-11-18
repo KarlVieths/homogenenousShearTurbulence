@@ -75,13 +75,32 @@ from `template.in` (only `S = cos theta`, `s2_amplitude = sin theta`,
 
 ## Things to know
 
-* **Initial condition.**  The decks start from the code's random field.  If
-  a case needs a different one to stay turbulent (you found that
-  relaminarisation depended on it), set `amplitude`, `kpeak` or `seed` for
-  that case in `CASES` in `make_runs.py` and rerun it; or put a
-  `Dati.cart.out` from a turbulent field into the run directory before the
-  first job (the run then resumes from it, with `time_from_restart = .true.`
-  taking the time from the file).
+* **Initial field** (`&init` and `restart_file` of the deck, set per case in
+  `CASES` of `make_runs.py`, then rerun it).  Two ways:
+  1. *Random field* (the default, `init_file=None`): the code generates it when
+     `restart_file` (default `Dati.cart.out`) does not exist, from `amplitude`,
+     `kpeak` and `seed` of `&init`: a random divergence-free field with the
+     spectrum (k/kpeak)^2 exp(1 - (k/kpeak)^2), no mean profiles.  `amplitude`
+     scales the potential, not the rms, and decides whether the run becomes
+     turbulent (`FINDINGS.md`: 1e-3 at kpeak 4 decays at Re = 1000).  For a
+     laminar-looking start, raise `amplitude`, or change `seed`.
+  2. *A turbulent field from a file* (`init_file=<path>` or a function of
+     theta, e.g. `from_3_63`: the end of the `filter_smooth_kc3.63` run of the
+     same angle, a `Dati.cart.out` or a `fields/field<i>.fld` snapshot).  The
+     deck then has `restart_file = '<path>'` and `time_from_restart = .false.`,
+     so the clock starts at `time = 0` and `t_max = 1400` is 1400 time units
+     after the start.  The file must have the same `alfa0`, `beta0` (box
+     15 x 5; otherwise the run stops unless `restart_remap = 'mode_index'`, which
+     keeps the modes the two boxes share); a different grid is allowed
+     (modes copied, y resampled by nearest neighbour, which for the same
+     grid changes nothing).  Re and S may differ (the log notes it).  The
+     file must not be named `Dati.cart.out` in the run directory, and the
+     path should be absolute: the code reads it relative to the run
+     directory.  When a job resumes a run the script sets
+     `restart_file = 'Dati.cart.out'` and `time_from_restart = .true.`
+     itself, so the start file is read once.
+  A start from the field of another filter has a transient (the first few
+  hundred time units) that the analysis should discard.
 * **Resubmitting a finished run is safe**: runs marked `DONE` are skipped.
   To rerun one from scratch remove its run directory contents except `hst.in`.
 * **The restart files and statistics are appended**, never truncated; after a

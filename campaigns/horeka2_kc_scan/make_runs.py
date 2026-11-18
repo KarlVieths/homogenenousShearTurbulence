@@ -13,13 +13,20 @@ import os
 EDGE = 0.3                                  # prod_edge: smooth edge, half width 0.3 k_c
 ANGLES = [0.0, 15.0, 30.0, 45.0]            # deg
 
-# case name -> k_c and the initial condition (&init of the deck)
-# The defaults are those of the campaign at k_c = 2 pi/sqrt 3 (doc.production).
-# If a case only becomes turbulent from a different initial field, change
-# amplitude / kpeak / seed here and rerun this script.
+# case name -> k_c and the initial field.
+# Either the random field of &init (amplitude, kpeak, seed; the defaults are
+# those of the campaign at k_c = 2 pi/sqrt 3, doc.production), or a velocity
+# field read from a file: set init_file to a path (absolute, or relative to the
+# run directory) or to a function of theta that returns one; the file is read
+# with the clock at 0 (time_from_restart = .false.), and must have this box
+# (alfa0, beta0 equal) and may have another grid (README, "Initial field").
+# init_file=None: no file, the random field.
+def from_3_63(theta):          # the end of the run of the earlier campaign at the same angle
+    return "/ABSOLUTE/PATH/TO/filter_smooth_kc3.63/theta_%04.1f/Dati.cart.out" % theta
+
 CASES = {
-    "smooth_kc2.09": dict(kc=2 * math.pi / 3, amplitude=6.0e-4, kpeak=8.0, seed=1),
-    "smooth_kc6.28": dict(kc=2 * math.pi,     amplitude=6.0e-4, kpeak=8.0, seed=1),
+    "smooth_kc2.09": dict(kc=2 * math.pi / 3, amplitude=6.0e-4, kpeak=8.0, seed=1, init_file=None),
+    "smooth_kc6.28": dict(kc=2 * math.pi,     amplitude=6.0e-4, kpeak=8.0, seed=1, init_file=None),
 }
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -29,6 +36,9 @@ for case, c in CASES.items():
     for theta in ANGLES:
         th = math.radians(theta)
         text = template
+        f = c["init_file"]
+        if callable(f):
+            f = f(theta)
         for key, val in {
             "@CASE@": case,
             "@EDGE@": repr(EDGE),
@@ -39,6 +49,7 @@ for case, c in CASES.items():
             "@AMPLITUDE@": "%.6f" % c["amplitude"],
             "@KPEAK@": repr(c["kpeak"]),
             "@SEED@": str(c["seed"]),
+            "@RESTART_FILE@": f or "Dati.cart.out",
         }.items():
             text = text.replace(key, val)
         assert "@" not in text, "unreplaced placeholder"

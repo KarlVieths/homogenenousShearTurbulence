@@ -43,9 +43,10 @@
   dt_field = 200.0               ! Dati.cart.<i>.out snapshot interval
   dt_save = 20.0                ! Dati.cart.out restart interval
   time = 0.0                    ! start time when not restarting
-  time_from_restart = .false.
-                                    ! (e.g. 'Dati.cart.in.Re2000'); the code always
-                                    ! writes its live checkpoint to Dati.cart.out
+  time_from_restart = .false.   ! .true.: take the clock from the restart file (the job script sets it when it resumes a run)
+  restart_file = 'Dati.cart.out'   ! the field the run starts from; if the file is absent the random field of &init is generated.
+                                    ! The code always writes its live checkpoint to Dati.cart.out; the job script points
+                                    ! restart_file there when it resumes, so a start field must have another name or path.
   timing = .false.              ! .true.: print the time per phase of the substep at the end
 /
 
