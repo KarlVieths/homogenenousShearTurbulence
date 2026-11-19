@@ -38,7 +38,28 @@ echo "$LD_LIBRARY_PATH" | tr ':' '\n' | grep -i stub || echo "  none"
 
 sec "what the NVHPC runtime sees (nvaccelinfo)"
 nvaccelinfo=$(command -v nvaccelinfo || ls $NVHPC_ROOT/compilers/bin/nvaccelinfo 2>/dev/null)
-[ -n "$nvaccelinfo" ] && $nvaccelinfo 2>&1 | head -12 || echo "nvaccelinfo not found (NVHPC_ROOT=$NVHPC_ROOT)"
+[ -n "$nvaccelinfo" ] && $nvaccelinfo -v 2>&1 | head -30 || echo "nvaccelinfo not found (NVHPC_ROOT=$NVHPC_ROOT)"
+
+sec "device files and kernel modules (CUDA needs /dev/nvidia-uvm and /dev/nvidiactl, not only /dev/nvidia0)"
+ls -l /dev/nvidia* 2>&1
+grep -E "^nvidia" /proc/modules | cut -d' ' -f1,3
+cat /proc/driver/nvidia-uvm/version 2>&1 | head -2
+
+sec "plain CUDA, no NVHPC: cudaGetDeviceCount with nvcc"
+cat > $CAMP/logs/cudatest.cu <<'EOF'
+#include <cstdio>
+#include <cuda_runtime.h>
+int main() {
+  int n = -1; cudaError_t e = cudaGetDeviceCount(&n);
+  printf("cudaGetDeviceCount = %d, error %d: %s\n", n, (int)e, cudaGetErrorString(e));
+  int v = 0, d = 0; cudaDriverGetVersion(&d); cudaRuntimeGetVersion(&v);
+  printf("driver supports %d, runtime %d\n", d, v);
+  return 0;
+}
+EOF
+if command -v nvcc >/dev/null; then
+  nvcc -o $CAMP/logs/cudatest $CAMP/logs/cudatest.cu 2>&1 | tail -3 && $CAMP/logs/cudatest
+else echo "no nvcc on PATH"; fi
 
 sec "the binary, started three ways (60 s each at most; the log ends at the first step or the error)"
 d=$CAMP/diag; rm -rf $d; mkdir -p $d; cp $CAMP/runs/smooth_kc2.09/theta_00.0/hst.in $d/; cd $d
