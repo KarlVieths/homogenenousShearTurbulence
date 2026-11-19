@@ -49,6 +49,12 @@ ls -l /dev/nvidia* 2>&1
 grep -E "^nvidia" /proc/modules | cut -d' ' -f1,3
 cat /proc/driver/nvidia-uvm/version 2>&1 | head -2
 
+sec "fabric state (NVSwitch nodes need it 'Completed' before CUDA initialises)"
+nvidia-smi -q -i 0 2>&1 | grep -i -A6 "fabric" | head -20
+nvidia-smi topo -m 2>&1 | head -12
+ls -l /dev/nvidia-caps 2>&1 | head -6
+echo "libcuda_wrapper: $(ls -l /lib64/libcuda_wrapper.so.0 2>&1)"
+
 sec "plain CUDA, no NVHPC: cudaGetDeviceCount with nvcc"
 cat > $CAMP/logs/cudatest.cu <<'EOF'
 #include <cstdio>
