@@ -12,6 +12,7 @@
 
 HST_ROOT=${HST_ROOT:-$HOME/hst}
 CAMP=$SLURM_SUBMIT_DIR
+[ -r $HST_ROOT/env/horeka2.sh ] || { echo "no $HST_ROOT/env/horeka2.sh: submit with  HST_ROOT=<repository> sbatch ... diag.slurm"; exit 1; }
 sec() { echo; echo "=== $* ==="; }
 
 sec "node, Slurm"
@@ -32,8 +33,12 @@ sec "libraries of $EXE (libcuda must resolve, not 'not found')"
 ldd $EXE | grep -E "cuda|omp|nvc|not found"
 echo "libcuda in ldconfig:"; ldconfig -p | grep libcuda
 
+echo "LD_LIBRARY_PATH entries with 'stubs' (a stub libcuda hides every GPU):"
+echo "$LD_LIBRARY_PATH" | tr ':' '\n' | grep -i stub || echo "  none"
+
 sec "what the NVHPC runtime sees (nvaccelinfo)"
-nvaccelinfo 2>&1 | head -12
+nvaccelinfo=$(command -v nvaccelinfo || ls $NVHPC_ROOT/compilers/bin/nvaccelinfo 2>/dev/null)
+[ -n "$nvaccelinfo" ] && $nvaccelinfo 2>&1 | head -12 || echo "nvaccelinfo not found (NVHPC_ROOT=$NVHPC_ROOT)"
 
 sec "the binary, started three ways (60 s each at most; the log ends at the first step or the error)"
 d=$CAMP/diag; rm -rf $d; mkdir -p $d; cp $CAMP/runs/smooth_kc2.09/theta_00.0/hst.in $d/; cd $d
