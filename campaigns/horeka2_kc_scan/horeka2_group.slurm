@@ -16,8 +16,9 @@
 # Variables (environment, normally set by submit.sh):
 #   RUNS      required, space-separated run directories, at most one per GPU
 #   HST_ROOT  repository with env/horeka2.sh and the builds (default $HOME/hst)
-#   EXE       the binary; default $HST_ROOT/build-gpu-h100/hst on H100/H200
-#             (cc90) and $HST_ROOT/build-gpu-b200/hst on B200 (cc100)
+#   EXE       the binary; default $HST_ROOT/build-gpu-<device>/hst with the
+#             device (h100, h200, b200) from the GPU's name; an H100 or H200
+#             node without its own build directory uses build-gpu-h100
 #   MARGIN    seconds before the limit at which a run stops (default 300)
 #   MAXSEG    maximum number of chained jobs (default 10), SEG the current one
 #   LAUNCH    how a run is started (default "mpirun --bind-to none -np 1";
@@ -42,11 +43,13 @@ LAUNCH=${LAUNCH-mpirun --bind-to none -np 1}
 # The environment.  On the GPU node the architecture is detected with nvidia-smi.
 source $HST_ROOT/env/horeka2.sh gpu || { echo "env/horeka2.sh failed"; exit 1; }
 if [ -z "$EXE" ]; then
-  case "$GPU_ARCH" in
-    cc90)  EXE=$HST_ROOT/build-gpu-h100/hst ;;
-    cc100) EXE=$HST_ROOT/build-gpu-b200/hst ;;
-    *)     echo "GPU_ARCH '$GPU_ARCH': no binary known, set EXE"; exit 1 ;;
-  esac
+  # build-gpu-<device> by the GPU's name; cc90 without a build of its own uses build-gpu-h100
+  gname=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1 | tr 'A-Z' 'a-z')
+  case "$gname" in *h200*) dev=h200;; *h100*) dev=h100;; *b200*) dev=b200;; *) dev=;; esac
+  [ -z "$dev" ] && case "$GPU_ARCH" in cc90) dev=h100;; cc100) dev=b200;; esac
+  [ -x $HST_ROOT/build-gpu-$dev/hst ] || { [ "$GPU_ARCH" = cc90 ] && dev=h100; }
+  [ -n "$dev" ] || { echo "GPU '$gname' ($GPU_ARCH): no binary known, set EXE"; exit 1; }
+  EXE=$HST_ROOT/build-gpu-$dev/hst
 fi
 [ -x "$EXE" ] || { echo "binary $EXE not found (build it with compile-horeka2.sh)"; exit 1; }
 

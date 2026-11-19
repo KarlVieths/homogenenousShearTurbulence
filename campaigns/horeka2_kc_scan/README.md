@@ -33,8 +33,8 @@ from `template.in` (only `S = cos theta`, `s2_amplitude = sin theta`,
 
         cd ~/hst && ./compile-horeka2.sh
 
-   The job picks `build-gpu-h100/hst` on H100/H200 (cc90) and
-   `build-gpu-b200/hst` on B200 (cc100) from the GPU it runs on.
+   The job picks `build-gpu-<device>/hst` (h100, h200 or b200) from the GPU's name;
+   an H100 or H200 node without a build of its own uses `build-gpu-h100`.
 
 2. **Copy this directory to the workspace** (a few GB per run) and work there:
 
@@ -111,7 +111,16 @@ from `template.in` (only `S = cos theta`, `s2_amplitude = sin theta`,
   Slurm account/partition names, `--gres=gpu:4`, `--cpus-per-task=8` (change
   the header of `horeka2_group.slurm` if the node does not have 4 x 8 cores
   to give), and the time limit of the partitions.  `HST_GPUS=gpu:h100:4`-style
-  GRES strings can be given to `submit.sh` if the cluster needs them.
-* On a node with 8 GPUs (B200) `HST_GPUS=gpu:8` and `--ntasks-per-node=8` in
-  the script header would allow all four angles of both cases (8 runs) in one
-  job; `submit.sh` as written submits one job per case.
+  GRES strings can be given to `submit.sh` if the cluster needs them (the count
+  after the last colon is what it uses).
+* **Partitions of HoreKA2** (binary = `build-gpu-<device>` of the repository):
+
+  | partition | GPUs per node | binary | `HST_GPUS` |
+  |---|---|---|---|
+  | `gpu-h100` | 4 H100 | `build-gpu-h100` | `gpu:4` (default) |
+  | `gpu-h200` | 4 H200 | `build-gpu-h200` | `gpu:4` (default) |
+  | `gpu-b200` | 4 B200 | `build-gpu-b200` | `gpu:4` (default) |
+  | `gpu-h200-8` | 8 H200 | `build-gpu-h200` | `gpu:8`: all 8 runs in one job |
+
+  With `gpu:4` `submit.sh` submits one job per case; with `gpu:8` one job with
+  all eight runs (and the test runs both cases at once).

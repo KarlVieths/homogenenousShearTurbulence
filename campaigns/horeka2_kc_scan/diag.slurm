@@ -28,7 +28,11 @@ source $HST_ROOT/env/horeka2.sh gpu || echo "env/horeka2.sh failed"
 echo "GPU_ARCH=$GPU_ARCH  NVHPC_ROOT=$NVHPC_ROOT"
 module list 2>&1 | tail -8
 
-EXE=$HST_ROOT/build-gpu-h100/hst
+gname=$(nvidia-smi --query-gpu=name --format=csv,noheader | head -n1 | tr 'A-Z' 'a-z')
+case "$gname" in *h200*) dev=h200;; *b200*) dev=b200;; *) dev=h100;; esac
+[ -x $HST_ROOT/build-gpu-$dev/hst ] || dev=h100
+EXE=$HST_ROOT/build-gpu-$dev/hst
+echo "GPU '$gname' -> $EXE"
 sec "libraries of $EXE (libcuda must resolve, not 'not found')"
 ldd $EXE | grep -E "cuda|omp|nvc|not found"
 echo "libcuda in ldconfig:"; ldconfig -p | grep libcuda
