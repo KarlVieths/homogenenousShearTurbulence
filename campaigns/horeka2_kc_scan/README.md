@@ -36,9 +36,11 @@ from `template.in` (only `S = cos theta`, `s2_amplitude = sin theta`,
    The job picks `build-gpu-<device>/hst` (h100, h200 or b200) from the GPU's name;
    an H100 or H200 node without a build of its own uses `build-gpu-h100`.
 
-2. **Copy this directory to the workspace** (a few GB per run) and work there:
+2. **Copy this directory to a workspace** (a few GB per run; allocate one with
+   `ws_allocate kc_scan 60`, find it with `ws_find kc_scan`; no backup; the
+   documentation gives the pattern `/hfs2/work/workspace/scratch/<user>-<name>`) and work there:
 
-        cp -r ~/hst/campaigns/horeka2_kc_scan <workspace>/kc_scan && cd <workspace>/kc_scan
+        cp -r ~/hst/campaigns/horeka2_kc_scan $(ws_find kc_scan)/ && cd $(ws_find kc_scan)/horeka2_kc_scan
 
 3. **Test** (8 minutes, one case, four angles at once):
 
@@ -107,20 +109,26 @@ from `template.in` (only `S = cos theta`, `s2_amplitude = sin theta`,
   crash that left a `Dati.cart.out` the next job continues from it and
   `Runtimedata` then has the lines of the lost interval twice (about 20 time
   units at most), which the analysis should drop.
+* **A node whose GPUs do not initialise** (nvidia-smi lists them, CUDA returns error 999) makes the job stop at its pre-flight check with a message.  Keep such a node out of the next submission with `export SBATCH_EXCLUDE=<node>` (Slurm reads it as `--exclude`) before `./submit.sh`.
 * **Not verified on HoreKA2**: module names and MPI of `env/horeka2.sh`, the
   Slurm account/partition names, `--gres=gpu:4`, `--cpus-per-task=8` (change
   the header of `horeka2_group.slurm` if the node does not have 4 x 8 cores
   to give), and the time limit of the partitions.  `HST_GPUS=gpu:h100:4`-style
   GRES strings can be given to `submit.sh` if the cluster needs them (the count
   after the last colon is what it uses).
-* **Partitions of HoreKA2** (binary = `build-gpu-<device>` of the repository):
+* **Partitions of HoreKA2** (binary = `build-gpu-<device>` of the repository; nodes,
+  limits and status from docs.nhr.kit.edu/clusters/horeka-2 and /usage/slurm, read 2026-11-19):
 
-  | partition | GPUs per node | binary | `HST_GPUS` |
-  |---|---|---|---|
-  | `gpu-h100` | 4 H100 | `build-gpu-h100` | `gpu:4` (default) |
-  | `gpu-h200` | 4 H200 | `build-gpu-h200` | `gpu:4` (default) |
-  | `gpu-b200` | 4 B200 | `build-gpu-b200` | `gpu:4` (default) |
-  | `gpu-h200-8` | 8 H200 | `build-gpu-h200` | `gpu:8`: all 8 runs in one job |
+  | partition | GPUs per node | nodes | binary | `HST_GPUS` | status |
+  |---|---|---|---|---|---|
+  | `gpu-h100` (dev: `dev-gpu-h100`, 1 h, 1 node) | 4 H100 | 22 | `build-gpu-h100` | `gpu:4` (default) | operational |
+  | `gpu-h200` (no dev partition) | 4 H200 | 13 | `build-gpu-h200` | `gpu:4` (default) | operational |
+  | `gpu-h200-8` | 8 H200 | 1 | `build-gpu-h200` | `gpu:8`: all 8 runs in one job | operational, one node only |
+  | `gpu-b200` (dev: `dev-gpu-b200`) | 4 B200 | 75 | `build-gpu-b200` | `gpu:4` | "Operation will start in December 2026" |
 
+  The time limit of the GPU partitions is 2 days, of the dev partitions 1 hour,
+  and a dev partition allows one job per user at a time.  `sinfo_t_idle` lists
+  the idle nodes only (a plain `sinfo` is restricted), so 0 there means busy,
+  not absent.
   With `gpu:4` `submit.sh` submits one job per case; with `gpu:8` one job with
   all eight runs (and the test runs both cases at once).

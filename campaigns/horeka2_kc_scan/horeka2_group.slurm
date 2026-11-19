@@ -53,6 +53,15 @@ if [ -z "$EXE" ]; then
 fi
 [ -x "$EXE" ] || { echo "binary $EXE not found (build it with compile-horeka2.sh)"; exit 1; }
 
+# Pre-flight: does CUDA initialise on this node?  (nvidia-smi can list GPUs that CUDA cannot use.)
+nva=$NVHPC_ROOT/compilers/bin/nvaccelinfo
+if [ -x $nva ] && ! $nva 2>&1 | grep -q "Device Number"; then
+  echo "CUDA does not initialise on $(hostname): nvaccelinfo sees no accelerator."
+  $nva 2>&1 | tail -4
+  echo "Report the node to the cluster support; resubmit with SBATCH_EXCLUDE=$(hostname) in the environment."
+  exit 1
+fi
+
 ngpu=$(nvidia-smi -L | wc -l)
 nrun=$(echo $RUNS | wc -w)
 [ "$nrun" -le "$ngpu" ] || { echo "$nrun runs but only $ngpu GPUs on this node"; exit 1; }
