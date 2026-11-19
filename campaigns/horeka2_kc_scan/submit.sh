@@ -26,6 +26,13 @@ TIME=${TIME:-06:00:00}
 ls -d $HST_ROOT/build-gpu-*/hst >/dev/null 2>&1 || echo "warning: no $HST_ROOT/build-gpu-*/hst yet (run compile-horeka2.sh)"
 [ -d runs ] || python3 make_runs.py >/dev/null
 mkdir -p logs
+# A start file named in a deck must exist here: the code does not stop on a missing
+# restart_file, it silently generates the random field of &init instead.
+for deck in runs/*/theta_*/hst.in; do
+  rf=$(sed -n "s/^ *restart_file *= *'\([^']*\)'.*/\1/p" "$deck")
+  { [ -z "$rf" ] || [ "$rf" = Dati.cart.out ]; } && continue
+  ( cd "$(dirname "$deck")" && [ -f "$rf" ] ) || { echo "$deck: start file '$rf' not found: fix init_file in make_runs.py, run it, and check the path on this system"; exit 1; }
+done
 export HST_ROOT
 HST_GPUS=${HST_GPUS:-gpu:4}
 ngpu=${HST_GPUS##*:}

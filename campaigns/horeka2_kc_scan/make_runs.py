@@ -53,6 +53,7 @@ for case, c in CASES.items():
         }.items():
             text = text.replace(key, val)
         assert "@" not in text, "unreplaced placeholder"
+        assert not (f and "ABSOLUTE/PATH" in f), "%s: init_file is still the placeholder path" % case
         d = os.path.join(here, "runs", case, "theta_%04.1f" % theta)
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, "hst.in"), "w") as f:
