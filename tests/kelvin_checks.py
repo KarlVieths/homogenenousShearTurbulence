@@ -9,6 +9,13 @@ order   Order-of-accuracy test (Option 1). Three runs of the same case at
                 --kx 0 --kz 1.2566370614 --ky0 3.1415926536 --G 1 \
                 --S 1 --A 1 --T 1.75 --nu 0 --v0 1+0.3j
 
+        The weights of the two mechanisms of the production can be set apart
+        (--glu for the lift-up, --gorr for the Orr transfer; default G each) and
+        the order taken in eta instead of v (--qty eta, with --eta0 the initial
+        eta; the run files then need the columns Re_eta, Im_eta, which
+        test_kelvin_s2's tables have).  The suite itself runs these order tests
+        inside test_kelvin_s2 (decks kelvin_split_order_*, order_fine_min = 2.8).
+
         Exit status: 0 PASS, 1 FAIL, 2 INVALID (finest error at round-off,
         dt not halving, or files inconsistent).
 
@@ -55,20 +62,28 @@ def read_run(path):
     v = np.atleast_1d(data["Re_v"]) + 1j * np.atleast_1d(data["Im_v"])
     dt = float(np.atleast_1d(data["dt"])[0]) if "dt" in data else None
     order = np.argsort(t)
-    return t[order], v[order], dt
+    eta = None
+    if "Re_eta" in data:
+        eta = (np.atleast_1d(data["Re_eta"]) + 1j * np.atleast_1d(data["Im_eta"]))[order]
+    return t[order], v[order], dt, eta
 
 
-def max_rel_error(t, v, p):
+def max_rel_error(t, v, p, eta=None):
     w = 2.0 * np.pi / p.T
-    v_ref, _, _ = closed_form(t, p.kx, p.ky0, p.kz, p.G, p.S, p.A, w, p.nu, p.v0, 0.0)
+    v_ref, eta_ref, _ = closed_form(t, p.kx, p.ky0, p.kz, p.G, p.S, p.A, w, p.nu, p.v0, p.eta0,
+                                    g_lu=p.glu, g_orr=p.gorr)
+    if p.qty == "eta":
+        if eta is None:
+            raise SystemExit("--qty eta needs the columns Re_eta, Im_eta in the run files")
+        return float(np.max(np.abs(eta - eta_ref)) / np.max(np.abs(eta_ref)))
     return float(np.max(np.abs(v - v_ref)) / abs(p.v0))
 
 
 def cmd_order(p):
     runs = [read_run(f) for f in p.runs]
-    errs = [max_rel_error(t, v, p) for (t, v, _) in runs]
-    dts = [dt for (_, _, dt) in runs]
-    print("run                      dt            max |v - v_ref|/|v0|")
+    errs = [max_rel_error(t, v, p, eta) for (t, v, _, eta) in runs]
+    dts = [dt for (_, _, dt, _) in runs]
+    print("run                      dt            " + ("max |eta - eta_ref|/max|eta_ref|" if p.qty == "eta" else "max |v - v_ref|/|v0|"))
     for f, dt, e in zip(p.runs, dts, errs):
         print(f"{f:24s} {dt if dt is not None else float('nan'):<13.6e} {e:.3e}")
 
@@ -147,6 +162,10 @@ def main():
                           ("S", 1.0), ("A", 1.0), ("T", 1.75), ("nu", 0.0)):
         o.add_argument(f"--{name}", type=float, default=default)
     o.add_argument("--v0", type=complex, default=1.0 + 0.3j)
+    o.add_argument("--eta0", type=complex, default=0.0, help="initial eta (default 0: v is checked, eta does not enter it)")
+    o.add_argument("--glu", type=float, default=None, help="weight of the lift-up (default G)")
+    o.add_argument("--gorr", type=float, default=None, help="weight of the Orr transfer (default G)")
+    o.add_argument("--qty", choices=("v", "eta"), default="v", help="quantity whose order is taken")
 
     m = sub.add_parser("margin", help="seeded-bug margin table")
     m.add_argument("table", help="CSV with columns bug,case,quantity,error,tol")

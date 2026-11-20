@@ -62,12 +62,53 @@ run_s2 kelvin_s2_b_Gh_start.in x
 run_s2 kelvin_s2_order_a_G1.in
 run_s2 kelvin_s2_order_b_Gh.in
 run_s2 kelvin_s2_order_a_G1_const.in
+# The two mechanisms of the production, the lift-up (prod_lu) and the Orr energy transfer
+# (prod_orr), weighted apart (selective_lu_orr.md, section 5): Kelvin modes of both kinds in a
+# constant and in an oscillating S2, the weights times a filter G, weights outside [0, 1], both
+# weights 0, the order of accuracy (finest pair >= 2.8, nu = 1e-12) in v without the Orr transfer
+# and in eta with both, and four tables checked by kelvin_ref.py.
+for m in a b; do
+  for w in lu0orr1 lu1orr0 mix; do
+    for s in osc const; do
+      x=; [ "$w" = mix ] && [ "$s" = osc ] && x=x
+      run_s2 kelvin_split_${m}_${w}_${s}.in $x
+    done
+  done
+done
+run_s2 kelvin_split_a_mix_filter.in x
+run_s2 kelvin_split_b_mix_filter.in x
+run_s2 kelvin_split_b_outside.in
+run_s2 kelvin_split_b_zero_osc.in
+run_s2 kelvin_split_order_a_orr0.in
+run_s2 kelvin_split_order_b_eta.in
+run_s2 kelvin_split_order_b_eta_g547.in
+# The energy budget of a nonlinear run with the weights, from statistics/split_runtime.dat and
+# Runtimedata (tests/split_budget.py): the identities to round-off, the budget to the residual of the
+# discretisation, which must fall with ny.  Each run in a directory of its own (the statistics
+# files are appended to).
+run_budget() {   # run_budget <ranks>
+  if ! python3 -c "import numpy" 2>/dev/null; then echo "--- split budget skipped: numpy not available"; return; fi
+  for ny in 64 128; do
+    mkdir -p "$work/budget$ny"; deck="$here/tests/decks/split_budget_ny$ny.in"; note=""
+    if [ "$1" -gt 1 ] && [ "$npy" -gt 1 ]; then
+      sed "s/&mesh /\&mesh npy = $npy, /" "$deck" > "$work/budget$ny/hst.in"; deck="$work/budget$ny/hst.in"; note=", npy = $npy"
+    fi
+    echo "--- hst on $1 rank(s), deck split_budget_ny$ny.in$note"
+    ( cd "$work/budget$ny" && mpirun -np "$1" "$here/$build/hst" "$deck" > run.log 2>&1 ) || { echo "run failed, see $work/budget$ny/run.log"; status=1; return; }
+  done
+  echo "--- split_budget.py: ny = 128 (and the fall of the residual from ny = 64)"
+  python3 "$here/tests/split_budget.py" "$work/budget128" --margin 20 --tol 5e-4 --prev "$work/budget64" --ratio 3 || status=1
+  echo "--- split_budget.py: ny = 64"
+  python3 "$here/tests/split_budget.py" "$work/budget64" --margin 20 --tol 2e-3 || status=1
+}
+run_budget "$np"
 run "$np" test_pressure pressure.in
 run "$np" test_taylorgreen pressure.in
 run 1     test_forcing pressure.in
 run "$np" test_conservation pressure.in
 run "$np" test_stokes stokes.in
 run "$np" test_stats pressure.in
+run "$np" test_split_stats pressure.in      # split_runtime.dat against a reference summed the other way round (weights, k_par = 0, k_perp = 0)
 rm -rf "$work"
 [ $status -eq 0 ] && echo "ALL PASSED" || echo "SOME FAILED"
 exit $status

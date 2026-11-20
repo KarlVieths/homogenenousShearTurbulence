@@ -21,13 +21,16 @@
 module hst_production
 
   use, intrinsic :: iso_c_binding
+  use mpi_f08
   use hst_params
 
   implicit none
   private
-  public :: production_active, production_setup, ncol_unforced
+  public :: production_active, production_setup, ncol_unforced, ncol_lu, ncol_orr
 
   integer(C_INT), save :: ncol_unforced = 0      ! this rank's columns with G < 1 (the (0,0) column not counted)
+  integer(C_INT), save :: ncol_lu = 0            ! ... with glu < 1 (lift-up weakened)
+  integer(C_INT), save :: ncol_orr = 0           ! ... with gorr < 1 (Orr transfer weakened)
 
 contains
 
@@ -39,8 +42,9 @@ contains
   ! not depend on time.
   subroutine production_setup()
     integer(C_INT) :: ix, iz
+    integer :: cnt(3), ierr
     real(C_DOUBLE) :: r, x
-    allocate (gprod(-nz:nz, nx0:nxN))
+    allocate (gprod(-nz:nz, nx0:nxN), glu(-nz:nz, nx0:nxN), gorr(-nz:nz, nx0:nxN))
     gprod = 1.0d0
     ncol_unforced = 0
     if (production_active()) then
@@ -57,9 +61,26 @@ contains
         end do
       end do
     end if
-    !$omp target enter data map(to: gprod)
+    ! the weights of the two mechanisms: one place, one array each, read by one thread per column
+    glu = prod_lu*gprod
+    gorr = prod_orr*gprod
+    ncol_lu = 0; ncol_orr = 0
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        if (ix == 0 .and. iz == 0) cycle
+        if (glu(iz, ix) < 1.0d0) ncol_lu = ncol_lu + 1
+        if (gorr(iz, ix) < 1.0d0) ncol_orr = ncol_orr + 1
+      end do
+    end do
+    !$omp target enter data map(to: gprod, glu, gorr)
     if (has_terminal .and. production_active()) write (*, '(A,I0)') &
       '   production filter: columns with G < 1 on rank 0: ', ncol_unforced
+    ! the run header: the weights and the columns they weaken, over all ranks ((0,0) not counted)
+    cnt = [ncol_lu, ncol_orr, (2*nz + 1)*(nxN - nx0 + 1)]
+    call MPI_Allreduce(MPI_IN_PLACE, cnt, 3, MPI_INTEGER, MPI_SUM, MPI_COMM_WORLD, ierr)
+    if (has_terminal .and. (prod_lu /= 1.0d0 .or. prod_orr /= 1.0d0)) write (*, '(A,F8.4,A,I0,A,F8.4,A,I0,A,I0,A)') &
+      '   production weights: lift-up', prod_lu, ': columns with weight < 1: ', cnt(1), ';  Orr transfer', prod_orr, &
+      ': columns with weight < 1: ', cnt(2), '  (of ', cnt(3) - 1, ')'
   end subroutine production_setup
 
 end module hst_production

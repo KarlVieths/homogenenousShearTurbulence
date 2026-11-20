@@ -22,7 +22,7 @@ contains
     namelist /time_control/ deltat, cflmax, t_max, nstep, wall_max, dt_stat, dt_field, dt_save, time, time_from_restart, restart_from_file, restart_remap, restart_file, timing
     namelist /init/ initial_condition, amplitude, seed, kpeak, tg_amplitude, tg_mode
     namelist /damping/ damp_kpar, damp_kperp, damp_rate, damp_hard, damp_edge, damp_norm, damp_mean, damp_follow, damp_angle
-    namelist /production/ prod_kc, prod_edge
+    namelist /production/ prod_kc, prod_edge, prod_lu, prod_orr
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
@@ -41,7 +41,7 @@ contains
     damp_kpar = 0.0d0; damp_kperp = 0.0d0; damp_rate = 0.0d0; damp_hard = .false.; damp_edge = 0.0d0
     damp_norm = 2.0d0; damp_mean = .false.; damp_follow = .true.; damp_angle = 0.0d0
     tg_amplitude = 1.0d0; tg_mode = 1
-    prod_kc = 0.0d0; prod_edge = 0.0d0
+    prod_kc = 0.0d0; prod_edge = 0.0d0; prod_lu = 1.0d0; prod_orr = 1.0d0
 
     open (newunit=unit, file=filename, status='old', action='read', iostat=ios)
     if (ios /= 0) then
@@ -100,6 +100,11 @@ contains
       print *, 'ERROR: the production filter needs prod_kc >= 0, 0 <= prod_edge < 1'
       error stop 1
     end if
+    ! Weights outside [0, 1] are meaningful (< 0 reverses a transfer, > 1 amplifies it) but are rarely intended.  Printed from
+    ! the terminal rank when this routine is called after the MPI set-up (every program here does).
+    if ((prod_lu < 0.0d0 .or. prod_lu > 1.0d0 .or. prod_orr < 0.0d0 .or. prod_orr > 1.0d0) .and. has_terminal) &
+      write (*, '(A,ES10.3,A,ES10.3,A)') ' WARNING: prod_lu =', prod_lu, ', prod_orr =', prod_orr, &
+        ' outside [0, 1]: a transfer is reversed (< 0) or amplified (> 1)'
 
     ! derived quantities
     ni = 1.0d0/re
@@ -147,6 +152,8 @@ contains
       '   damping: k_par <', damp_kpar, '  k_perp <', damp_kperp, '  norm=', damp_norm, '  hard=', damp_hard, &
       '  rate=', damp_rate, '  edge=', damp_edge, '  mean=', damp_mean, '  follow=', damp_follow, '  angle=', damp_angle
     if (prod_kc > 0.0d0) write (*, '(A,F8.4,A,F6.3)') '   production filter: |k_h| >=', prod_kc, '  edge=', prod_edge
+    if (prod_lu /= 1.0d0 .or. prod_orr /= 1.0d0) write (*, '(A,F8.4,A,F8.4,A)') &
+      '   production weights: lift-up prod_lu =', prod_lu, '  Orr transfer prod_orr =', prod_orr, '  (times the filter G)'
     write (*, '(A,F10.6,A,F10.6,A,F10.3)') '   deltat=', deltat, '   cflmax=', cflmax, '   t_max =', t_max
     write (*, '(A,F10.4,A,F10.4,A,F10.4)') '   dt_stat=', dt_stat, '  dt_field=', dt_field, '  dt_save=', dt_save
     write (*, '(A,I10,A,F10.0,A,L1,A,L1,A,A)') '   nstep =', nstep, '   wall_max =', wall_max, &

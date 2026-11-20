@@ -1,0 +1,8 @@
+! Regression deck (tests/regression.sh): small_prod.in with the weights 0.5 (lift-up) and 0.3 (Orr transfer).  The reference
+! tests/reference/small_split.fld is from this code, after the Kelvin and budget tests of selective_lu_orr.md section 5 passed
+! (it guards later changes: more ranks, other builds), not from an independent implementation.
+&mesh  nx = 7, ny = 24, nz = 7, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 200.0, S = 1.0, linear = .false., exact_shift = .true., s2_mean = 0.2, s2_amplitude = 0.6, s2_period = 0.5, s2_start = 0.0 /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 0.2, nstep = 100000, dt_stat = 0.01, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&production  prod_kc = 6.0, prod_edge = 0.3, prod_lu = 0.5, prod_orr = 0.3 /

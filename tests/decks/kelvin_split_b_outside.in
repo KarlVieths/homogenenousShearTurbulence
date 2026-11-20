@@ -1,0 +1,8 @@
+! test_kelvin_s2 deck (selective_lu_orr.md, section 5.1): weights outside [0, 1] (prod_lu = -0.5, prod_orr = 1.4), 4 periods of S T = 5.25
+! One column (kx = 2 pi/15, kz = 2 pi/5), S = 1, S2 = 1 sin(2 pi t/5.25), nu = 1e-3; weights of the column: g_LU = -0.5, g_Orr = 1.4.
+&mesh  nx = 1, ny = 128, nz = 1, alfa0 = 0.41887902047863906, beta0 = 1.2566370614359172, ly = 2.0 /
+&physics  re = 1000, S = 1.0, linear = .true., exact_shift = .true., s2_amplitude = 1, s2_period = 5.25 /
+&time_control  deltat = 0.025, cflmax = 0.0, t_max = 21, nstep = 100000, dt_stat = 1e9, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&production  prod_kc = 0, prod_lu = -0.5, prod_orr = 1.4 /
+&kelvin  ix_mode = 1, iz_mode = 1, iy_mode = 1, tol = 1e-05 /

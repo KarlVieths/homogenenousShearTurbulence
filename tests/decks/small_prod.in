@@ -1,0 +1,9 @@
+! Regression deck (tests/regression.sh): small grid, exact_shift, oscillating S2, the production filter with a smooth edge
+! (G from 0 to 1 between k_h = 4.2 and 7.8) and the weights of the two mechanisms at 1: the reference tests/reference/small_prod.fld
+! was made by the production_filter binary before the weights existed (the same deck without prod_lu and prod_orr), so this deck
+! checks that the weights at 1 change nothing (selective_lu_orr.md, section 5.4).
+&mesh  nx = 7, ny = 24, nz = 7, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 200.0, S = 1.0, linear = .false., exact_shift = .true., s2_mean = 0.2, s2_amplitude = 0.6, s2_period = 0.5, s2_start = 0.0 /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 0.2, nstep = 100000, dt_stat = 0.01, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&production  prod_kc = 6.0, prod_edge = 0.3, prod_lu = 1.0, prod_orr = 1.0 /

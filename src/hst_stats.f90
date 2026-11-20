@@ -31,6 +31,26 @@
 !   grad u> of the unforced range, which holds the (0,0) column's
 !   fluctuation whenever the totals do; <G u v>, <G w v>: the production
 !   is -S uv_G - S2 vw_G)
+! split_runtime.dat (always, except with a Stokes layer): the energy and its two
+!   routes of production, per unit volume (doc.production/selective_lu_orr.md, section 4):
+!   time  E_tor  E_pol  P_LU  P_Orr  gP_LU  gP_Orr  diss  P_LU(kpar=0)  P_Orr(kperp=0)  E_00
+!   With a = S alfa + S2 beta, b = S beta - S2 alfa (a = |(S, S2)| k_par, b = |(S, S2)| k_perp, the
+!   wavenumber along and across the shear direction), kh^2 = alfa^2 + beta^2 and the
+!   Fourier amplitudes of a column with kh > 0,
+!     P_Orr = -(a/kh^2) Re <(alfa u + beta w) v*>,   P_LU = -(b/kh^2) Re <(beta u - alfa w) v*>
+!     E_tor = <|beta u - alfa w|^2>/(2 kh^2),        E_pol = <|u|^2 + |v|^2 + |w|^2>/2 - E_tor
+!   (continuity gives D v = -i alfa u - i beta w, so no derivative is needed), summed over the
+!   columns with the weights of the other statistics (ix > 0 twice, y-average with dyl).  Then
+!     P_LU + P_Orr = -<u v> S - <v w> S2      (the production of Runtimedata)
+!     d/dt (E_tor + E_pol) = gP_LU + gP_Orr - diss,   gP_LU = sum glu P_LU,  gP_Orr = sum gorr P_Orr
+!   (columns 4, 5: the full mechanisms, 6, 7: what enters the budget with the weights
+!   glu = prod_lu G and gorr = prod_orr G of hst_production; no large-scale damping and no
+!   Stokes layer).  E_tor + E_pol = energy of Runtimedata: the (0,0) column, whose horizontal
+!   velocity is the kh -> 0 limit of the toroidal part, enters E_tor with its fluctuation about
+!   the box mean (E_00, column 11, is that part of column 2).  P_LU(kpar=0) is the sum over the
+!   columns with k_par = 0 (|a| < 1e-9 |(S, S2)| kh: ix = 0 for S2 = 0, where the Orr transfer
+!   vanishes) and P_Orr(kperp=0) over those with k_perp = 0 (iz = 0 for S2 = 0): the columns where
+!   one mechanism acts alone.
 ! statistics/spectra/exz<i>.dat (with every field snapshot): the column energies
 !   ix  iz  kx  kz  E  with E = ly/2 sum_y |u|^2 of the column (modes with
 !   ix > 0 counted twice, as in energy), averaged over the dt_stat samples
@@ -84,7 +104,7 @@ module hst_stats
   private
   public :: outstats, open_runtimedata, close_runtimedata, spectrum_write
 
-  integer, parameter :: unit_rt = 121, unit_var = 122, unit_sl = 123, unit_dp = 124, unit_pf = 125
+  integer, parameter :: unit_rt = 121, unit_var = 122, unit_sl = 123, unit_dp = 124, unit_pf = 125, unit_sp = 126
   real(C_DOUBLE), allocatable, save :: exz(:, :), exz_acc(:, :)   ! column energies: device scratch, host sum
   integer, save :: nacc = 0
   real(C_DOUBLE), save :: t_acc0 = 0.0d0
@@ -100,10 +120,23 @@ contains
     if (has_terminal .and. damping_active()) open (unit=unit_dp, file='statistics/damping_runtime.dat', action='write', position='append')
     if (has_terminal .and. production_active()) &
       open (unit=unit_pf, file='statistics/production_runtime.dat', action='write', position='append')
+    if (has_terminal .and. .not. stokes_active()) call open_split()
     allocate (exz(-nz:nz, nx0:nxN), exz_acc(-nz:nz, nx0:nxN))
     exz = 0.0d0; exz_acc = 0.0d0; nacc = 0; t_acc0 = time; mean_acc = 0.0d0
     !$omp target enter data map(to: exz)
   end subroutine open_runtimedata
+
+  ! split_runtime.dat, appended to like the others; a new file gets a header line
+  ! ('#', so numpy.loadtxt skips it)
+  subroutine open_split()
+    logical :: ex
+    integer :: sz
+    ex = .false.; sz = 0
+    inquire (file='statistics/split_runtime.dat', exist=ex, size=sz)
+    open (unit=unit_sp, file='statistics/split_runtime.dat', action='write', position='append')
+    if (.not. ex .or. sz <= 0) write (unit_sp, '(A)') '# time E_tor E_pol P_LU P_Orr gP_LU gP_Orr diss ' // &
+      'P_LU(kpar=0) P_Orr(kperp=0) E_00   (per unit volume; selective_lu_orr.md section 4)'
+  end subroutine open_split
 
   subroutine close_runtimedata()
     if (has_terminal) close (unit_rt)
@@ -111,6 +144,7 @@ contains
     if (has_terminal .and. stokes_active()) close (unit_sl)
     if (has_terminal .and. damping_active()) close (unit_dp)
     if (has_terminal .and. production_active()) close (unit_pf)
+    if (has_terminal .and. .not. stokes_active()) close (unit_sp)
     !$omp target exit data map(delete: exz)
     deallocate (exz, exz_acc)
   end subroutine close_runtimedata
@@ -143,11 +177,77 @@ contains
     exz_acc = 0.0d0; nacc = 0; t_acc0 = time; mean_acc = 0.0d0
   end subroutine spectrum_write
 
+  ! The sums of split_runtime.dat over the whole box (box-height integrals, reduced
+  ! over the ranks, not yet divided by ly):
+  !   sp(1) E_tor (with the (0,0) column's fluctuation)  sp(2) E_pol
+  !   sp(3) P_LU   sp(4) P_Orr   sp(5) glu P_LU   sp(6) gorr P_Orr
+  !   sp(7) P_LU over the columns with k_par = 0   sp(8) P_Orr over those with k_perp = 0
+  !   sp(9) E_00
+  ! V is the velocity after linsolve, at the current time (S2 = s2_of(time), as Runtimedata).
+  subroutine split_sums(sp)
+    real(C_DOUBLE), intent(out) :: sp(9)
+    integer(C_INT) :: ix, iy, iz
+    real(C_DOUBLE) :: etor, epol, plu, porr, glup, gorrp, plu_par, porr_perp, raw00, m1, m2
+    real(C_DOUBLE) :: s2now, al, be, kh2, aa, bb, w, svec, qu, pl, po, ly_w
+    complex(C_DOUBLE_COMPLEX) :: cu, cv, cw, ct, cp
+    real(C_DOUBLE) :: sums00(2)
+    integer :: ierr
+
+    s2now = s2_of(time)
+    svec = sqrt(S*S + s2now*s2now)
+    etor = 0; epol = 0; plu = 0; porr = 0; glup = 0; gorrp = 0; plu_par = 0; porr_perp = 0; raw00 = 0; m1 = 0; m2 = 0
+    !$omp target teams distribute parallel do collapse(3) default(none) &
+    !$omp shared(V, dyl, glu, gorr, S, s2now, svec, alfa0, beta0, nx0, nxN, nz, ny0, nyN) &
+    !$omp private(ix, iy, iz, al, be, kh2, aa, bb, w, qu, pl, po, cu, cv, cw, ct, cp) &
+    !$omp reduction(+:etor, epol, plu, porr, glup, gorrp, plu_par, porr_perp, raw00, m1, m2)
+    do ix = nx0, nxN
+      do iz = -nz, nz
+        do iy = ny0, nyN
+          cu = V(iy, iz, ix, 1); cv = V(iy, iz, ix, 2); cw = V(iy, iz, ix, 3)
+          if (ix == 0 .and. iz == 0) then
+            ! no k_h: the horizontal velocity of the column about its box mean (v00 = 0), as in outstats
+            m1 = m1 + dreal(cu)*dyl(iy)
+            m2 = m2 + dreal(cw)*dyl(iy)
+            raw00 = raw00 + dyl(iy)*dreal(cu*conjg(cu) + cw*conjg(cw))
+            cycle
+          end if
+          al = alfa0*ix; be = beta0*iz
+          kh2 = al*al + be*be
+          aa = S*al + s2now*be                   ! |(S, S2)| k_par
+          bb = S*be - s2now*al                   ! |(S, S2)| k_perp
+          w = 2.0d0*dyl(iy)
+          if (ix == 0) w = dyl(iy)
+          ct = be*cu - al*cw                     ! -i eta
+          cp = al*cu + be*cw                     ! -D v, by continuity
+          qu = 0.5d0*w*dreal(cu*conjg(cu) + cv*conjg(cv) + cw*conjg(cw))
+          etor = etor + 0.5d0*w*dreal(ct*conjg(ct))/kh2
+          epol = epol + qu - 0.5d0*w*dreal(ct*conjg(ct))/kh2
+          pl = -w*bb/kh2*dreal(ct*conjg(cv))
+          po = -w*aa/kh2*dreal(cp*conjg(cv))
+          plu = plu + pl; porr = porr + po
+          glup = glup + glu(iz, ix)*pl; gorrp = gorrp + gorr(iz, ix)*po
+          if (abs(aa) <= 1.0d-9*svec*sqrt(kh2)) plu_par = plu_par + pl
+          if (abs(bb) <= 1.0d-9*svec*sqrt(kh2)) porr_perp = porr_perp + po
+        end do
+      end do
+    end do
+    sp = [etor, epol, plu, porr, glup, gorrp, plu_par, porr_perp, 0.0d0]
+    ! the (0,0) column: raw sums here, the box mean off after the reduction (sum dyl = ly up to round-off)
+    sp(9) = raw00
+    call MPI_Allreduce(MPI_IN_PLACE, sp, 9, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+    sums00(1) = m1; sums00(2) = m2
+    call MPI_Allreduce(MPI_IN_PLACE, sums00, 2, MPI_DOUBLE_PRECISION, MPI_SUM, MPI_COMM_WORLD, ierr)
+    ly_w = sum(dyl)
+    sp(9) = 0.5d0*(sp(9) - (sums00(1)**2 + sums00(2)**2)/ly_w)
+    sp(1) = sp(1) + sp(9)                       ! E_00 belongs to E_tor
+  end subroutine split_sums
+
   subroutine outstats()
     integer(C_INT) :: ix, iy, iz, c
     real(C_DOUBLE) :: w, eps, uv, uu, vv, ww, vw, uw, grad, mfx, mfz
     real(C_DOUBLE) :: q_in, q_out, e_in, e_out, g_in, g_out, l_in, l_out
     real(C_DOUBLE) :: sums(24), q2, ed, pd, gsoft, qc, inv_ly, ly_w, gl, uul, vvl, wwl, epsl, gradl, uvg, vwg, uwl
+    real(C_DOUBLE) :: sp(9)
     integer(C_INT) :: inc00         ! 1: the (0,0) column enters the fluctuation (about its box mean)
     complex(C_DOUBLE_COMPLEX) :: cu, cv, cw, dq
     integer :: ierr
@@ -281,6 +381,8 @@ contains
       end if
     end if
     q2 = uu + vv + ww
+    sp = 0.0d0
+    if (.not. stokes_active()) call split_sums(sp)    ! collective
     if (has_terminal) then
       ! Convert the box-height integrals to y-averaged (box-mean) quantities
       ! with physically-meaningful units (mean per unit volume), so nothing
@@ -308,6 +410,11 @@ contains
         write (unit_dp, '(2(ES23.15,1X),I8,2(1X,ES23.15))') time, damping_theta(time)*180.0d0/3.141592653589793d0, &
           nint(sums(16)), 0.5d0*ed, 0.5d0*pd
         flush (unit_dp)
+      end if
+      if (.not. stokes_active()) then
+        write (unit_sp, '(ES23.15,10(1X,ES23.15))') time, sp(1)*inv_ly, sp(2)*inv_ly, sp(3)*inv_ly, sp(4)*inv_ly, &
+          sp(5)*inv_ly, sp(6)*inv_ly, ni*eps*inv_ly, sp(7)*inv_ly, sp(8)*inv_ly, sp(9)*inv_ly
+        flush (unit_sp)
       end if
       if (production_active()) then
         write (unit_pf, '(ES23.15,1X,I8,7(1X,ES23.15))') time, nint(sums(23)), sums(17)*inv_ly, sums(18)*inv_ly, sums(19)*inv_ly, &

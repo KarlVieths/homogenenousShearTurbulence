@@ -38,7 +38,7 @@ int k^2 = (k_z^2 + b^2) t + 2 c b sin(omega t)/omega + c^2 (t/2 + sin(2 omega t)
 
 | file | |
 |---|---|
-| `tests/test_kelvin_s2.f90` | the test (one rank, linear).  Reads the deck, plus a `&kelvin` group: `ix_mode`, `iz_mode`, `iy_mode` (k_y0 = 2 pi iy_mode/L_y at t = 0), `v0`/`eta0` as (re, im), `dt_out` (default S2 period/8), `refine`, `order_min`, `tol`, `csv` |
+| `tests/test_kelvin_s2.f90` | the test (one rank, linear).  Reads the deck, plus a `&kelvin` group: `ix_mode`, `iz_mode`, `iy_mode` (k_y0 = 2 pi iy_mode/L_y at t = 0), `v0`/`eta0` as (re, im), `dt_out` (default S2 period/8), `refine`, `order_min`, `order_fine_min` (the criterion on the finest pair only), `order_qty` (`'v'` or `'eta'`: the quantity whose order is taken), `tol`, `csv`.  The weights of the column are `prod_lu G` and `prod_orr G`, computed from the deck, and the solver's arrays must equal them (the lift-up / Orr split: [../doc.production/selective_lu_orr.md](../doc.production/selective_lu_orr.md), decks `kelvin_split_*`) |
 | `tests/kelvin_ref.py` | independent reference (scipy ODE integration instead of the quadrature of the Fortran test); `--selftest` checks the closed forms against a direct integration of the three velocity components (4e-12); `--compare run.csv` checks a table of the test; without options it writes the reference curves |
 | `tests/kelvin_s2_study.py` | the full matrix on demand, with the constant-S2 controls |
 | `tests/decks/kelvin_s2_*.in` | the 13 decks of the suite |

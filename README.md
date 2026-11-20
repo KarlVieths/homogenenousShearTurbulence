@@ -21,7 +21,9 @@ production filter (the `&production` group,
 [doc.production/production_filter.md](doc.production/production_filter.md): the mean shear
 produces energy only in the Fourier columns with `sqrt(kx^2 + kz^2) >=
 prod_kc`, sharply or through a smooth edge, which sets a length scale
-that does not depend on the direction of the shear), in a
+that does not depend on the direction of the shear; `prod_lu` and `prod_orr` weight its two mechanisms, the
+lift-up and the Orr energy transfer, apart:
+[doc.production/selective_lu_orr.md](doc.production/selective_lu_orr.md)), in a
 box that is periodic in `x` (streamwise) and `z` (spanwise) and
 shear-periodic in `y`: Fourier in `x` and `z` with 3/2 dealiasing, compact
 (five-point, fourth-order for `d/dy` and `d2/dy2`, sixth for `d4/dy4`)
@@ -386,7 +388,8 @@ snapshots at 19-29 s each.
 | y decomposition | merged into `main` in session 11 (tags `xz-parallel` before, `xyz-parallel` after; DESIGN.md 7 (i), WP6): `npy` in `&mesh`, validated at 2 and 4 slabs on CPU and GPU and on two HoreKA nodes; 2 x 4 A100 at 1.33x (256^3) and 1.79x (512^3) one node (FINDINGS.md); `npy = 0` (default) lets the code choose: one slab per node |
 | large-scale damping | merged from `damping_from_main` (doc.damping/DAMPING.md): `&damping` masks the x-z columns inside an ellipse of the shear frame, so a box enlarged n times keeps the small box's length scale at any shear direction; hard mask (Galerkin truncation) or soft rate; campaign n = 2..5 at four angles: the structure (S*, b_ij, correlations) is angle independent from n = 3 on, the level follows the lattice count near the ellipse (1/n) |
 | production filter | `&production` (`prod_kc`, `prod_edge`), `src/hst_production.f90`, [doc.production/production_filter.md](doc.production/production_filter.md): with a smooth edge the statistics of a 15 x 2 x 5 box are independent of the shear direction within 3 % in the level and 0.002 in the anisotropy; decks of the campaign in `doc.production/assets/campaign/` |
-| safety net | `tests/run_tests.sh` (34 runs, three of them the damping, four the production-filter Kelvin modes and thirteen the oscillating-S2 Kelvin series) and `tests/regression.sh` (three decks at 1e-10) on CPU and GPU |
+| selective lift-up / Orr suppression | `prod_lu`, `prod_orr` in `&production`, `statistics/split_runtime.dat` (energy split toroidal / poloidal, production of the two mechanisms), [doc.production/selective_lu_orr.md](doc.production/selective_lu_orr.md): Kelvin-mode, order, budget and seeded-bug tests (`tests/split_*`, `kelvin_split_*` decks); the study runs themselves are not done |
+| safety net | `tests/run_tests.sh` (58 runs, three of them the damping, four the production-filter Kelvin modes, thirteen the oscillating-S2 Kelvin series, and 24 of the lift-up / Orr split: Kelvin modes, order of accuracy, statistics, energy budget) and `tests/regression.sh` (five decks at 1e-10) on CPU and GPU; `tests/split_bug_audit.py` plants the bugs of the split in a scratch copy |
 
 ## Layout
 

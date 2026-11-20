@@ -4,27 +4,38 @@
 !   mpirun -np 1 build-cpu/test_kelvin_s2 deck.in      (linear = .true. is forced)
 !
 ! One Fourier column (kx, kz) holds one plane wave, in the shear U = (S y, 0,
-! S2(t) y) and with the production filter G of the column:
+! S2(t) y) and with the weights of its column, gl = glu (the lift-up, the
+! source of eta) and go = gorr (the Orr energy transfer); the production filter
+! G of the column is gl = go = G, and prod_lu, prod_orr weight the two apart
+! (doc.production/selective_lu_orr.md).  The weights are computed here from the
+! deck, gl = prod_lu G(k_h) and go = prod_orr G(k_h) with G the smoothstep of
+! doc.production/production_filter.md, and not read from the solver: the
+! solver's arrays glu, gorr must equal them (else the test fails), or a wrong
+! construction of the weights would also be in the reference.
 !
 !   ky(t)  = ky0 - kx S t - kz gamma_z(t),            gamma_z = int S2 dt
-!   v(t)   = v0 (k0^2/k(t)^2)^((1 + G)/2) E(t),       E = exp(-ni int k^2 dt)
-!   eta(t) = E(t) [eta0 - i G v0 int (S kz - S2 kx) (k0^2/k^2)^((1 + G)/2) dt]
-!   |u|^2  = (k^2 |v|^2 + |eta|^2)/kh^2   (= |u0|^2 E^2 for G = 0)
+!   v(t)   = v0 (k0^2/k(t)^2)^((1 + go)/2) E(t),      E = exp(-ni int k^2 dt)
+!   eta(t) = E(t) [eta0 - i gl v0 int (S kz - S2 kx) (k0^2/k^2)^((1 + go)/2) dt]
+!   |u|^2  = (k^2 |v|^2 + |eta|^2)/kh^2   (= |u0|^2 E^2 for gl = go = 0)
 !
 ! for any S2(t).  The program integrates the mode with the production time
 ! step, and at every output time compares, with the analytic ky(t):
 !   - the projections of v and eta on exp(i ky y)  (amplitude errors)
 !   - the projection residual  |v - vhat exp(i ky y)|/|v|  (a wrong phase or
 !     wavenrgber in the shear-periodic shift shows up here)
-!   - the column energy, and for G = 0 against |u0|^2 E^2 (no gain)
+!   - the column energy, and for gl = go = 0 against |u0|^2 E^2 (no gain)
 !   - gamma_y of the code against its closed form
 ! Amplitude errors are relative to the largest reference amplitude of the
 ! run.  With refine = r the run is repeated at deltat/2, ..., deltat/2^r and
-! the observed order is printed; order_min > 0 makes it a pass criterion.
+! the observed order (in v, or in eta with order_qty = 'eta') is printed;
+! order_min > 0 makes it a pass criterion for every pair of levels, and
+! order_fine_min > 0 for the finest pair alone (the others may still be
+! outside the asymptotic range).
 !
 ! The mode is set by the &kelvin group of the deck (read here, the solver
 ! does not know it): ix_mode, iz_mode, iy_mode (ky0 = 2 pi iy_mode/ly at t =
-! 0), v0, eta0 as (re, im) pairs, dt_out, refine, order_min, tol, csv.  With
+! 0), v0, eta0 as (re, im) pairs, dt_out, refine, order_min, order_fine_min,
+! order_qty, tol, csv.  With
 ! csv = 'file' the finest run is written as a table that kelvin_ref.py
 ! --compare checks against its own, independent, reference.
 program test_kelvin_s2
@@ -51,16 +62,18 @@ program test_kelvin_s2
 
   ! the &kelvin group
   integer :: ix_mode, iz_mode, iy_mode, refine
-  real(C_DOUBLE) :: v0re, v0im, eta0re, eta0im, dt_out, order_min, tol
+  real(C_DOUBLE) :: v0re, v0im, eta0re, eta0im, dt_out, order_min, order_fine_min, tol
   character(len=256) :: csv
-  namelist /kelvin/ ix_mode, iz_mode, iy_mode, v0re, v0im, eta0re, eta0im, dt_out, refine, order_min, tol, csv
+  character(len=8) :: order_qty
+  namelist /kelvin/ ix_mode, iz_mode, iy_mode, v0re, v0im, eta0re, eta0im, dt_out, refine, order_min, order_fine_min, order_qty, &
+    tol, csv
 
   integer(C_INT) :: ix, iz
-  real(C_DOUBLE) :: kx, kz, kh2, ky0q, k02, gp, pexp, t0, dt0
+  real(C_DOUBLE) :: kx, kz, kh2, ky0q, k02, g_lu, g_orr, pexp, t0, dt0, fq
   complex(C_DOUBLE_COMPLEX) :: v0, eta0
   integer :: nout, nper0, lev, ierr
   real(C_DOUBLE) :: err_prev, order, finest(6)
-  logical :: ok, failed
+  logical :: ok, failed, weights_ok
   real(C_DOUBLE), allocatable :: tt(:), kyv(:), gcode(:), gex(:), s2v(:)
   complex(C_DOUBLE_COMPLEX), allocatable :: vref(:), etaref(:), vnum(:), etanum(:)
   real(C_DOUBLE), allocatable :: eref(:), enrg(:), e0e2(:), resv(:), reseta(:)
@@ -77,8 +90,12 @@ program test_kelvin_s2
   kh2 = kx*kx + kz*kz
   if (kh2 == 0.0d0) error stop 'the (0,0) column is not a Kelvin mode'
   ky0q = 2.0d0*PI*iy_mode/ly
-  gp = gprod(iz, ix)
-  pexp = 0.5d0*(1.0d0 + gp)
+  g_lu = prod_lu*filter_g(sqrt(kh2)); g_orr = prod_orr*filter_g(sqrt(kh2))
+  pexp = 0.5d0*(1.0d0 + g_orr)
+  weights_ok = abs(glu(iz, ix) - g_lu) <= 1.0d-14 .and. abs(gorr(iz, ix) - g_orr) <= 1.0d-14
+  if (.not. weights_ok .and. has_terminal) write (*, '(A,2ES16.8,A,2ES16.8)') &
+    '   the solver weights (glu, gorr) =', glu(iz, ix), gorr(iz, ix), ' are not prod_lu G, prod_orr G =', g_lu, g_orr
+  if (trim(order_qty) /= 'v' .and. trim(order_qty) /= 'eta') error stop "order_qty must be 'v' or 'eta'"
   v0 = cmplx(v0re, v0im, C_DOUBLE_COMPLEX); eta0 = cmplx(eta0re, eta0im, C_DOUBLE_COMPLEX)
   t0 = time
   k02 = kh2 + ky_of(t0)**2
@@ -100,28 +117,38 @@ program test_kelvin_s2
   call make_reference()
 
   if (has_terminal) then
-    write (*, '(A,I0,A,I0,A,I0,A,F8.4,A,F6.3,A,F6.3)') '   column (', ix, ',', iz, '), ky0 index ', iy_mode, &
-      ', G = ', gp, ', S = ', S, ', |S2| <= ', abs(s2_amplitude) + abs(s2_mean)
+    write (*, '(A,I0,A,I0,A,I0,A,F8.4,A,F8.4,A,F6.3,A,F6.3)') '   column (', ix, ',', iz, '), ky0 index ', iy_mode, &
+      ', g_LU = ', g_lu, ', g_Orr = ', g_orr, ', S = ', S, ', |S2| <= ', abs(s2_amplitude) + abs(s2_mean)
     write (*, '(A,F8.4,A,I0,A,F8.4,A,ES9.2)') '   to t = ', t0 + nout*dt_out, ' in ', nout, ' outputs of ', dt_out, &
       ', S2 period ', s2_period
   end if
 
-  failed = .false.
+  failed = .not. weights_ok
   err_prev = -1.0d0
   do lev = 0, refine
     call run_level(nper0*2**lev, dt0/2**lev, finest, lev == refine)
+    fq = finest(1)
+    if (trim(order_qty) == 'eta') fq = finest(2)
     order = 0.0d0
-    if (lev > 0 .and. err_prev > 1.0d-11 .and. finest(1) > 0.0d0) order = log(err_prev/finest(1))/log(2.0d0)
+    if (lev > 0 .and. err_prev > 1.0d-11 .and. fq > 0.0d0) order = log(err_prev/fq)/log(2.0d0)
     ok = finest(1) <= tol .and. finest(2) <= tol .and. finest(3) <= tol .and. finest(4) <= tol &
          .and. finest(5) <= tol .and. finest(6) <= 1.0d-10
     if (lev > 0 .and. order_min > 0.0d0 .and. err_prev > 1.0d-11 .and. order < order_min) ok = .false.
+    if (lev == refine .and. lev > 0 .and. order_fine_min > 0.0d0) then
+      if (err_prev <= 1.0d-11) then
+        ok = .false.            ! the order is meaningless at round-off: a deck that asks for it must be resolved
+        if (has_terminal) write (*, '(A)') '   order_fine_min: the error of the coarser level is at round-off, no order to judge'
+      else if (order < order_fine_min) then
+        ok = .false.
+      end if
+    end if
     if (has_terminal) then
       write (*, '(A,ES9.2,A,ES9.2,A,ES9.2,A,ES9.2,A,ES9.2,A,ES9.2)') '   dt = ', dt0/2**lev, &
         '  err v ', finest(1), '  eta ', finest(2), '  energy ', finest(3), '  proj ', finest(4), '  G=0 gain ', finest(5)
-      if (lev > 0 .and. order /= 0.0d0) write (*, '(A,F6.2)') '        observed order in v: ', order
+      if (lev > 0 .and. order /= 0.0d0) write (*, '(A,A,A,F6.2)') '        observed order in ', trim(order_qty), ': ', order
     end if
     if (.not. ok) failed = .true.
-    err_prev = finest(1)
+    err_prev = fq
   end do
   if (has_terminal) write (*, '(A,ES10.2)') '   max |gamma_y(code) - gamma_z(closed form)| = ', finest(6)
   call test_finish(.not. failed)
@@ -134,7 +161,7 @@ contains
     integer :: unit, ios
     ix_mode = 1; iz_mode = 1; iy_mode = 1
     v0re = 1.0d0; v0im = 0.3d0; eta0re = 0.4d0; eta0im = -0.2d0
-    dt_out = 0.0d0; refine = 0; order_min = 0.0d0; tol = 1.0d-6; csv = ''
+    dt_out = 0.0d0; refine = 0; order_min = 0.0d0; order_fine_min = 0.0d0; order_qty = 'v'; tol = 1.0d-6; csv = ''
     deck = 'hst.in'
     if (command_argument_count() >= 1) call get_command_argument(1, deck)
     open (newunit=unit, file=trim(deck), status='old', action='read', iostat=ios)
@@ -145,6 +172,23 @@ contains
   end subroutine read_kelvin_group
 
   !------------------------------------------------------ closed forms -----
+  ! The production filter of a column, from the definition (hst_production):
+  ! G = smoothstep((k_h/prod_kc - (1 - prod_edge))/(2 prod_edge)), a step for prod_edge = 0
+  ! (columns on k_h = prod_kc within 1e-6 are forced), 1 for prod_kc = 0.
+  real(C_DOUBLE) function filter_g(kh)
+    real(C_DOUBLE), intent(in) :: kh
+    real(C_DOUBLE) :: r, x
+    filter_g = 1.0d0
+    if (prod_kc <= 0.0d0) return
+    r = kh/prod_kc
+    if (prod_edge > 0.0d0) then
+      x = min(1.0d0, max(0.0d0, (r - (1.0d0 - prod_edge))/(2.0d0*prod_edge)))
+      filter_g = x*x*(3.0d0 - 2.0d0*x)
+    else if (r < 1.0d0 - 1.0d-6) then
+      filter_g = 0.0d0
+    end if
+  end function filter_g
+
   ! S2(t) and gamma_z(t) = int_0^t S2, written from the definition of the
   ! deck (zero before s2_start; s2_mean + s2_amplitude sin(omega (t - s2_start))
   ! or, for s2_period = 0, the constant s2_mean + s2_amplitude).
@@ -178,7 +222,7 @@ contains
   end function ky_of
 
   ! Adds the integrals over [ta, tb] of k^2 (viscous decay) and of the lift-up
-  ! weight (S kz - S2 kx)(k0^2/k^2)^p to aint and bint.
+  ! weight (S kz - S2 kx)(k0^2/k^2)^p, p = (1 + go)/2, to aint and bint.
   subroutine add_integrals(ta, tb, aint, bint)
     real(C_DOUBLE), intent(in) :: ta, tb
     real(C_DOUBLE), intent(inout) :: aint, bint
@@ -210,7 +254,7 @@ contains
       k2 = kh2 + kyv(m)**2
       visc = exp(-ni*aint)
       vref(m) = v0*(k02/k2)**pexp*visc
-      etaref(m) = visc*(eta0 - I*gp*v0*bint)
+      etaref(m) = visc*(eta0 - I*g_lu*v0*bint)
       eref(m) = 0.5d0*((k2/kh2)*abs(vref(m))**2 + abs(etaref(m))**2/kh2)
       e0e2(m) = e0*visc*visc
       gex(m) = gamma_ex(tt(m))
@@ -302,7 +346,7 @@ contains
     f(3) = maxval(abs(enrg - eref))/pn
     f(4) = max(maxval(resv), maxval(reseta))
     f(5) = 0.0d0
-    if (gp == 0.0d0) f(5) = maxval(abs(enrg - e0e2))/maxval(e0e2)
+    if (g_lu == 0.0d0 .and. g_orr == 0.0d0) f(5) = maxval(abs(enrg - e0e2))/maxval(e0e2)
     f(6) = maxval(abs(gcode - gex))
     if (last .and. len_trim(csv) > 0) call write_csv(dt)
   end subroutine run_level
@@ -315,7 +359,8 @@ contains
     write (unit, '(A,ES24.16)') '# kx = ', kx
     write (unit, '(A,ES24.16)') '# kz = ', kz
     write (unit, '(A,ES24.16)') '# ky0 = ', ky_of(t0)
-    write (unit, '(A,ES24.16)') '# G = ', gp
+    write (unit, '(A,ES24.16)') '# g_lu = ', g_lu
+    write (unit, '(A,ES24.16)') '# g_orr = ', g_orr
     write (unit, '(A,ES24.16)') '# S = ', S
     write (unit, '(A,ES24.16)') '# s2_mean = ', s2_mean
     write (unit, '(A,ES24.16)') '# s2_amplitude = ', s2_amplitude
