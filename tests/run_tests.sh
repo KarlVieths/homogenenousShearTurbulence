@@ -82,6 +82,18 @@ run_s2 kelvin_split_b_zero_osc.in
 run_s2 kelvin_split_order_a_orr0.in
 run_s2 kelvin_split_order_b_eta.in
 run_s2 kelvin_split_order_b_eta_g547.in
+# The weights taking effect at a time (prod_lu_start, prod_orr_start; selective_lu_orr.md, section 9): the
+# lift-up or the Orr weight switched off after three periods, both switching at different times inside a
+# filter, the switch times in the opposite order to the mechanisms, a switch time before the start and one
+# after the end of the run, and the order of accuracy in eta across two switches (finest pair >= 2.8).
+# After every step the solver's weights are compared with the deck's for that step.
+run_s2 kelvin_split_sw_a_lu_osc.in x
+run_s2 kelvin_split_sw_a_orr_osc.in x
+run_s2 kelvin_split_sw_b_mix_filter.in x
+run_s2 kelvin_split_sw_b_swapped_const.in x
+run_s2 kelvin_split_sw_a_early.in x
+run_s2 kelvin_split_sw_b_late.in x
+run_s2 kelvin_split_order_sw_b_eta.in
 # The energy budget of a nonlinear run with the weights, from statistics/split_runtime.dat and
 # Runtimedata (tests/split_budget.py): the identities to round-off, the budget to the residual of the
 # discretisation, which must fall with ny.  Each run in a directory of its own (the statistics
@@ -100,6 +112,15 @@ run_budget() {   # run_budget <ranks>
   python3 "$here/tests/split_budget.py" "$work/budget128" --margin 20 --tol 5e-4 --prev "$work/budget64" --ratio 3 || status=1
   echo "--- split_budget.py: ny = 64"
   python3 "$here/tests/split_budget.py" "$work/budget64" --margin 20 --tol 2e-3 || status=1
+  # the weights taking effect at times that are not on the step grid: hst cuts its steps to end on them
+  mkdir -p "$work/budgetsw"; deck="$here/tests/decks/split_budget_switch.in"; note=""
+  if [ "$1" -gt 1 ] && [ "$npy" -gt 1 ]; then
+    sed "s/&mesh /\&mesh npy = $npy, /" "$deck" > "$work/budgetsw/hst.in"; deck="$work/budgetsw/hst.in"; note=", npy = $npy"
+  fi
+  echo "--- hst on $1 rank(s), deck split_budget_switch.in$note"
+  ( cd "$work/budgetsw" && mpirun -np "$1" "$here/$build/hst" "$deck" > run.log 2>&1 ) || { echo "run failed, see $work/budgetsw/run.log"; status=1; return; }
+  echo "--- split_budget.py: switch times 0.2037 (lift-up) and 0.4511 (Orr)"
+  python3 "$here/tests/split_budget.py" "$work/budgetsw" --margin 20 --tol 2e-3 --switch 0.2037 0.4511 || status=1
 }
 run_budget "$np"
 run "$np" test_pressure pressure.in
@@ -109,6 +130,7 @@ run "$np" test_conservation pressure.in
 run "$np" test_stokes stokes.in
 run "$np" test_stats pressure.in
 run "$np" test_split_stats pressure.in      # split_runtime.dat against a reference summed the other way round (weights, k_par = 0, k_perp = 0)
+run 1     test_production_switch pressure.in   # update_production_weights, production_clip_dt: the weights in effect, the cut of the step
 rm -rf "$work"
 [ $status -eq 0 ] && echo "ALL PASSED" || echo "SOME FAILED"
 exit $status

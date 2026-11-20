@@ -22,7 +22,7 @@ contains
     namelist /time_control/ deltat, cflmax, t_max, nstep, wall_max, dt_stat, dt_field, dt_save, time, time_from_restart, restart_from_file, restart_remap, restart_file, timing
     namelist /init/ initial_condition, amplitude, seed, kpeak, tg_amplitude, tg_mode
     namelist /damping/ damp_kpar, damp_kperp, damp_rate, damp_hard, damp_edge, damp_norm, damp_mean, damp_follow, damp_angle
-    namelist /production/ prod_kc, prod_edge, prod_lu, prod_orr
+    namelist /production/ prod_kc, prod_edge, prod_lu, prod_orr, prod_lu_start, prod_orr_start
 
     ! defaults: the Sekimoto, Dong & Jimenez (2016) box Lx:Ly:Lz = 3:2:1
     nx = 63; ny = 128; nz = 63
@@ -42,6 +42,7 @@ contains
     damp_norm = 2.0d0; damp_mean = .false.; damp_follow = .true.; damp_angle = 0.0d0
     tg_amplitude = 1.0d0; tg_mode = 1
     prod_kc = 0.0d0; prod_edge = 0.0d0; prod_lu = 1.0d0; prod_orr = 1.0d0
+    prod_lu_start = -huge(1.0d0); prod_orr_start = -huge(1.0d0)
 
     open (newunit=unit, file=filename, status='old', action='read', iostat=ios)
     if (ios /= 0) then
@@ -154,6 +155,10 @@ contains
     if (prod_kc > 0.0d0) write (*, '(A,F8.4,A,F6.3)') '   production filter: |k_h| >=', prod_kc, '  edge=', prod_edge
     if (prod_lu /= 1.0d0 .or. prod_orr /= 1.0d0) write (*, '(A,F8.4,A,F8.4,A)') &
       '   production weights: lift-up prod_lu =', prod_lu, '  Orr transfer prod_orr =', prod_orr, '  (times the filter G)'
+    if (prod_lu_start > -0.5d0*huge(1.0d0)) write (*, '(A,F12.5,A)') &
+      '   lift-up: weight prod_lu from time', prod_lu_start, ' (before: the filter G alone, prod_lu = 1)'
+    if (prod_orr_start > -0.5d0*huge(1.0d0)) write (*, '(A,F12.5,A)') &
+      '   Orr transfer: weight prod_orr from time', prod_orr_start, ' (before: the filter G alone, prod_orr = 1)'
     write (*, '(A,F10.6,A,F10.6,A,F10.3)') '   deltat=', deltat, '   cflmax=', cflmax, '   t_max =', t_max
     write (*, '(A,F10.4,A,F10.4,A,F10.4)') '   dt_stat=', dt_stat, '  dt_field=', dt_field, '  dt_save=', dt_save
     write (*, '(A,I10,A,F10.0,A,L1,A,L1,A,A)') '   nstep =', nstep, '   wall_max =', wall_max, &

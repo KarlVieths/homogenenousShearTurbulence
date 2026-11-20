@@ -16,7 +16,11 @@
 ! (iz = 0), where only one mechanism acts (and which must not be zero for S2 = 0, or the test would not
 ! see them).  It also checks the identities E_tor + E_pol = energy and P_LU + P_Orr = -S uv - S2 vw of
 ! Runtimedata, diss against Runtimedata, and that the weights matter (the weighted and the unweighted
-! sums differ).
+! sums differ).  Four cases: S2 = 0; a constant S2; and, with the switch time prod_lu_start = 5, the
+! same S2 at t = 0 (the lift-up weight is G alone, the Orr weight prod_orr G) and at t = 5 (both in
+! effect).  The weights of the reference are those of the deck at the time of the call, G (gprod)
+! times prod_lu or 1, and not the solver's arrays glu, gorr, which outstats must have brought up to
+! date by itself (there is no time step in between).
 program test_split_stats
 
   use, intrinsic :: iso_c_binding
@@ -34,7 +38,7 @@ program test_split_stats
   real(C_DOUBLE), parameter :: PI = 3.141592653589793d0
   integer :: ierr, m, iy, icase
   real(C_DOUBLE) :: lyw, errmax, errcase, s2
-  real(C_DOUBLE) :: ref(11), got(11), rt(13), scale
+  real(C_DOUBLE) :: ref(11), got(11), rt(13), scale, fl, fo
   logical :: passed, case_ok
 
   call test_start()
@@ -58,11 +62,16 @@ program test_split_stats
 
   passed = .true.
   errmax = 0.0d0
-  do icase = 1, 2
-    ! S2 = 0 (k_par = ix = 0, k_perp = iz = 0 are columns), then a constant S2
+  do icase = 1, 4
+    ! S2 = 0 (k_par = ix = 0, k_perp = iz = 0 are columns), then a constant S2; cases 3 and 4: the lift-up
+    ! weight starts at t = 5, which is not yet reached at t = 0 (3) and just reached at t = 5 (4)
     s2_amplitude = 0.0d0; s2_period = 0.0d0; s2_start = 0.0d0
+    s2_mean = 0.3d0
     if (icase == 1) s2_mean = 0.0d0
-    if (icase == 2) s2_mean = 0.3d0
+    prod_lu_start = -huge(1.0d0)
+    time = 0.0d0
+    if (icase >= 3) prod_lu_start = 5.0d0
+    if (icase == 4) time = 5.0d0
     s2 = s2_of(time)
     call open_runtimedata()
     call outstats()
@@ -99,7 +108,7 @@ program test_split_stats
         write (*, '(A)') '    the weighted and the unweighted sums agree: the test does not see the weights'
         errcase = max(errcase, 1.0d0)
       end if
-      write (*, '(A,I0,A,F5.2,A,ES10.3)') '  case ', icase, ' (S2 = ', s2, '): max relative error ', errcase
+      write (*, '(A,I0,A,F5.2,A,F5.2,A,ES10.3)') '  case ', icase, ' (S2 = ', s2, ', t = ', time, '): max relative error ', errcase
       errmax = max(errmax, errcase)
       case_ok = errcase < 1.0d-10
     end if
@@ -158,6 +167,10 @@ contains
     real(C_DOUBLE) :: al, be, kh2, aa, bb, w, plu, porr, ubar, wbar, acc(9), loc2(2), pt
     complex(C_DOUBLE_COMPLEX) :: cu, cv, cw
 
+    ! the weights of the deck at this time: G alone before the switch time, prod_lu G (prod_orr G) from it
+    fl = 1.0d0; fo = 1.0d0
+    if (time >= prod_lu_start) fl = prod_lu
+    if (time >= prod_orr_start) fo = prod_orr
     ! box means of the (0,0) column
     loc2 = 0.0d0
     if (has_average) then
@@ -189,7 +202,7 @@ contains
           porr = -(aa/kh2)*w*dreal((al*cu + be*cw)*conjg(cv))
           plu = -(bb/kh2)*w*dreal((be*cu - al*cw)*conjg(cv))
           acc(3) = acc(3) + plu; acc(4) = acc(4) + porr
-          acc(5) = acc(5) + glu(iz, ix)*plu; acc(6) = acc(6) + gorr(iz, ix)*porr
+          acc(5) = acc(5) + fl*gprod(iz, ix)*plu; acc(6) = acc(6) + fo*gprod(iz, ix)*porr
           ! the columns where one mechanism acts alone: S2 = 0, k_par = alfa, k_perp = beta; otherwise
           ! the columns that are exactly aligned (a = 0 or b = 0 within the solver's tolerance)
           if (s2v == 0.0d0) then

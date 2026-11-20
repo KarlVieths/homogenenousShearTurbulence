@@ -98,7 +98,7 @@ module hst_stats
   use hst_derivatives, only: s2_of, gamma_y_of
   use hst_stokes, only: stokes_active
   use hst_damping, only: damping_active, damping_theta, damping_soft_factor, ncol_damped
-  use hst_production, only: production_active, ncol_unforced
+  use hst_production, only: production_active, ncol_unforced, update_production_weights
 
   implicit none
   private
@@ -195,6 +195,7 @@ contains
 
     s2now = s2_of(time)
     svec = sqrt(S*S + s2now*s2now)
+    call update_production_weights(time)       ! glu, gorr as in effect at this time (a row at a switch time shows the new ones)
     etor = 0; epol = 0; plu = 0; porr = 0; glup = 0; gorrp = 0; plu_par = 0; porr_perp = 0; raw00 = 0; m1 = 0; m2 = 0
     !$omp target teams distribute parallel do collapse(3) default(none) &
     !$omp shared(V, dyl, glu, gorr, S, s2now, svec, alfa0, beta0, nx0, nxN, nz, ny0, nyN) &

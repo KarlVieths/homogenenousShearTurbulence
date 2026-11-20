@@ -54,6 +54,9 @@ module hst_params
   ! (tilting of the mean vorticity, source of eta) and the Orr energy transfer (tilting of the wavevector, the part of the d2v
   ! equation that remains); the effective weight of a column is prod_lu G(k_h) and prod_orr G(k_h).  1: the production filter as is.
   real(C_DOUBLE), save :: prod_lu, prod_orr
+  ! the time from which each weight applies (selective_lu_orr.md, section 9): before it the mechanism acts with the filter weight G
+  ! alone, from it with prod_lu G (prod_orr G).  The default -huge(1d0) is 'from the start of the run' (also after a restart).
+  real(C_DOUBLE), save :: prod_lu_start, prod_orr_start
 
   !------------------------------------------------------- clock and I/O ----
   real(C_DOUBLE), save :: deltat, dt_fixed, cflmax, cfl = 0.0d0   ! dt_fixed: deck value, 0 = from cflmax

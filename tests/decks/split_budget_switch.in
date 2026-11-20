@@ -1,0 +1,9 @@
+! Budget of the energy with the weights of the two mechanisms switching on during the run (selective_lu_orr.md, sections 5.3 and 9;
+! tests/split_budget.py --switch): nonlinear run as split_budget_ny64, but before t = 0.2037 the lift-up has the filter weight G alone
+! and before t = 0.4511 the Orr transfer has; from them prod_lu G = 0.2 G and prod_orr G = 0.1 G.  Neither time is on the step grid
+! (deltat = 0.002), so that hst must cut a step to end on each; the log of the run says when the weights changed.
+&mesh  nx = 15, ny = 64, nz = 15, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 200.0, S = 1.0, linear = .false., exact_shift = .true., s2_mean = 0.3, s2_amplitude = 0.5, s2_period = 2.0 /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 0.8, nstep = 100000, dt_stat = 0.01, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 4.0 /
+&production  prod_kc = 6.0, prod_edge = 0.3, prod_lu = 0.2, prod_orr = 0.1, prod_lu_start = 0.2037, prod_orr_start = 0.4511 /

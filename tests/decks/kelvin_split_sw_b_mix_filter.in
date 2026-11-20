@@ -1,0 +1,8 @@
+! test_kelvin_s2 deck (selective_lu_orr.md, section 9): both weights switch, at different times, inside the filter (G = 0.22 in the column)
+! kx, kz /= 0, S2 = sin(2 pi t/5.25); before: G alone (0.22, 0.22); from t = 5.25 g_LU = 0.5 G, from 13.125 g_Orr = 0.3 G.
+&mesh  nx = 1, ny = 128, nz = 1, alfa0 = 0.41887902047863906, beta0 = 1.2566370614359172, ly = 2.0 /
+&physics  re = 1000, S = 1.0, linear = .true., exact_shift = .true., s2_amplitude = 1, s2_period = 5.25 /
+&time_control  deltat = 0.025, cflmax = 0.0, t_max = 21, nstep = 100000, dt_stat = 1e9, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&production  prod_kc = 1.5, prod_edge = 0.3, prod_lu = 0.5, prod_orr = 0.3, prod_lu_start = 5.25, prod_orr_start = 13.125 /
+&kelvin  ix_mode = 1, iz_mode = 1, iy_mode = 1, tol = 1e-05, csv = 'kelvin_split_sw_b_mix_filter.csv' /

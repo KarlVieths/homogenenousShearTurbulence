@@ -41,6 +41,7 @@ module hst_equations
   use hst_derivatives, only: fill_ghosts, fill_ghosts_field, shear_shifts, s2_of, s2_integral
   use hst_stokes, only: stokes_active, stokes_force, stokes_apply
   use hst_damping, only: damping_active, damping_update, damping_mask, damping_soft_factor
+  use hst_production, only: update_production_weights
   use hst_linsolve, only: line_solve, KIND_D2V, KIND_ETA, KIND_D0, KIND_DY
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral, compute_cfl
@@ -62,6 +63,7 @@ contains
   subroutine timestep()
     integer(C_INT) :: i, m
     real(C_DOUBLE) :: dt_sub
+    call update_production_weights(time)      ! the weights of the production for the whole step (switch times: hst_production)
     do i = 1, 3
       call tic()
       if (.not. linear .or. i == 3) call transform_to_physical()

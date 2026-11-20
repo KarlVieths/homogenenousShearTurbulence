@@ -26,6 +26,11 @@ mode  u(x, t) = uhat(t) exp(i (kx x + ky(t) y + kz z)):
         the table written by tests/test_kelvin_s2 (csv = 'run.csv', whose header
         holds the parameters) against this reference; exit status 1 above tol
 
+Switch times (selective_lu_orr.md, section 9): g_lu and g_orr are the weights from the times t_lu and
+t_orr on, lu_before and orr_before those before (the filter weight G): step functions of time.  The
+integrals are then taken piecewise, and v = v0 E (k0^2/k_s^2)^pb (k_s^2/k^2)^pa after the switch of
+the Orr weight at t_s (pb, pa: p = (1 + g_orr)/2 before and after; k_s = k(t_s)).
+
 Errors in v, eta and the energy are relative to the largest reference
 amplitude of the run, as in the Fortran test.  Only numpy and scipy.
 """
@@ -41,16 +46,56 @@ TWOPI = 2.0 * np.pi
 class Mode:
     """One column: parameters and the closed forms."""
 
-    def __init__(self, kx, kz, ky0, G, S, A, T, nu, v0, eta0, mean=0.0, start=0.0, t0=0.0, g_lu=None, g_orr=None):
-        # G sets both weights (the production filter); g_lu and g_orr override one each
+    def __init__(self, kx, kz, ky0, G, S, A, T, nu, v0, eta0, mean=0.0, start=0.0, t0=0.0, g_lu=None, g_orr=None,
+                 t_lu=-np.inf, t_orr=-np.inf, lu_before=None, orr_before=None):
+        # G sets both weights (the production filter); g_lu and g_orr override one each.  They hold from t_lu and
+        # t_orr; before, the weights are lu_before and orr_before (default: the same, no switch)
         self.g_lu = G if g_lu is None else g_lu
         self.g_orr = G if g_orr is None else g_orr
+        self.t_lu, self.t_orr = t_lu, t_orr
+        self.lu_before = self.g_lu if lu_before is None else lu_before
+        self.orr_before = self.g_orr if orr_before is None else orr_before
         self.kx, self.kz, self.ky0, self.G, self.S = kx, kz, ky0, G, S
         self.A, self.T, self.nu, self.mean, self.start, self.t0 = A, T, nu, mean, start, t0
         self.v0, self.eta0 = complex(v0), complex(eta0)
         self.kh2 = kx * kx + kz * kz
         self.k02 = self.kh2 + self.ky(t0) ** 2     # ky0 is the wavenumber at t = 0, k0 that at t0
         self.p = 0.5 * (1.0 + self.g_orr)
+        self.pb = 0.5 * (1.0 + self.orr_before)
+        self.tsw = max(self.t_orr, self.t0)       # the Orr weight changes here (t0: in effect from the start)
+        self.ks2 = float(self.k2(self.tsw))
+
+    def switching(self):
+        return np.isfinite(self.t_lu) or np.isfinite(self.t_orr)
+
+    def weights(self, tau):
+        """(g_lu, g_orr) at time tau."""
+        return (self.g_lu if tau >= self.t_lu else self.lu_before, self.g_orr if tau >= self.t_orr else self.orr_before)
+
+    def fac(self, t):
+        """v/(v0 E): (k0^2/k^2)^pb up to the switch of the Orr weight, (k0^2/ks^2)^pb (ks^2/k^2)^p after it."""
+        t = np.asarray(t, dtype=float)
+        k2 = self.k2(t)
+        return np.where(t < self.tsw, (self.k02 / k2) ** self.pb, (self.k02 / self.ks2) ** self.pb * (self.ks2 / k2) ** self.p)
+
+    def integrate(self, make_rhs, y0, t):
+        """y(t) of y' = rhs(tau, y) from t[0], with the rhs of make_rhs(g_lu, g_orr) frozen in each stretch between the
+        switch times (the weights jump there; a step of the integrator never straddles one)."""
+        t = np.asarray(t, dtype=float)
+        out = np.zeros((len(y0), t.size))
+        out[:, 0] = y0
+        cuts = [c for c in sorted({self.t_lu, self.t_orr}) if t[0] < c < t[-1]]
+        edges = [t[0]] + cuts + [t[-1]]
+        y = np.array(y0, dtype=float)
+        for a, b in zip(edges[:-1], edges[1:]):
+            m = (t > a) & (t <= b)
+            pts = t[m]
+            if pts.size == 0 or pts[-1] != b:
+                pts = np.append(pts, b)
+            sol = solve_ivp(make_rhs(*self.weights(0.5 * (a + b))), (a, b), y, t_eval=pts, method='DOP853', rtol=1e-13, atol=1e-15)
+            out[:, m] = sol.y[:, :int(m.sum())]
+            y = sol.y[:, -1]
+        return out
 
     def s2(self, t):
         t = np.asarray(t, dtype=float)
@@ -75,15 +120,15 @@ class Mode:
         return self.kh2 + self.ky(t) ** 2
 
     def integrals(self, t):
-        """int_t0^t k^2 and int_t0^t (S kz - S2 kx)(k0^2/k^2)^p, for sorted t >= t0."""
-        def rhs(tau, y):
-            k2 = self.k2(tau)
-            return [k2, (self.S * self.kz - self.s2(tau) * self.kx) * (self.k02 / k2) ** self.p]
+        """int_t0^t k^2 and int_t0^t g_lu(tau) (S kz - S2 kx) v/(v0 E), for sorted t >= t0."""
+        def make_rhs(gl, go):
+            def rhs(tau, y):
+                return [float(self.k2(tau)), gl * (self.S * self.kz - float(self.s2(tau)) * self.kx) * float(self.fac(tau))]
+            return rhs
         t = np.asarray(t, dtype=float)
         out = np.zeros((2, t.size))
         if t.size > 1:
-            sol = solve_ivp(rhs, (t[0], t[-1]), [0.0, 0.0], t_eval=t, method='DOP853', rtol=1e-13, atol=1e-15)
-            out = sol.y
+            out = self.integrate(make_rhs, [0.0, 0.0], t)
         return out
 
     def series(self, t):
@@ -91,8 +136,8 @@ class Mode:
         a, b = self.integrals(t)
         k2 = self.k2(t)
         E = np.exp(-self.nu * a)
-        v = self.v0 * (self.k02 / k2) ** self.p * E
-        eta = E * (self.eta0 - 1j * self.g_lu * self.v0 * b)
+        v = self.v0 * self.fac(t) * E
+        eta = E * (self.eta0 - 1j * self.v0 * b)
         en = 0.5 * (k2 * np.abs(v) ** 2 + np.abs(eta) ** 2) / self.kh2
         return dict(t=t, S2=self.s2(t), gamma=self.gamma(t), ky=self.ky(t), E=E, v=v, eta=eta, energy=en, a=a)
 
@@ -100,8 +145,8 @@ class Mode:
         """The three velocity components integrated directly, with the pressure from continuity:
         uhat' = -G v (S, 0, S2) + (1 + G) a v k/k^2 - nu k^2 uhat,  a = S kx + S2 kz."""
         kx, kz, G, S, nu = self.kx, self.kz, self.G, self.S, self.nu
-        if self.g_lu != self.g_orr:
-            raise ValueError('direct() is the primitive form of the production filter: g_lu = g_orr; use ode()')
+        if self.g_lu != self.g_orr or self.switching():
+            raise ValueError('direct() is the primitive form of the production filter: g_lu = g_orr, no switch times; use ode()')
         ky0 = self.ky(self.t0)
         u0 = (-kx * ky0 * self.v0 - 1j * kz * self.eta0) / self.kh2
         w0 = (-kz * ky0 * self.v0 + 1j * kx * self.eta0) / self.kh2
@@ -130,23 +175,26 @@ class Mode:
             v'   = (1 + g_orr) a ky v/k^2 - nu k^2 v          a = S kx + S2 kz
             eta' = -i g_lu b v - nu k^2 eta                   b = S kz - S2 kx
             ky'  = -a
-        (selective_lu_orr.md, section 5.1).  Independent of the closed form: nothing is integrated
-        in closed form here, and the energy follows as in series()."""
+        (selective_lu_orr.md, section 5.1), the weights piecewise constant between the switch times.
+        Independent of the closed form: nothing is integrated in closed form here, and the energy
+        follows as in series()."""
         kx, kz, S, nu = self.kx, self.kz, self.S, self.nu
 
-        def rhs(tau, y):
-            v, eta, ky = y[0] + 1j * y[1], y[2] + 1j * y[3], y[4]
-            s2 = float(self.s2(tau))
-            a, b = S * kx + s2 * kz, S * kz - s2 * kx
-            k2 = self.kh2 + ky * ky
-            dv = (1 + self.g_orr) * a * ky * v / k2 - nu * k2 * v
-            deta = -1j * self.g_lu * b * v - nu * k2 * eta
-            return [dv.real, dv.imag, deta.real, deta.imag, -a]
+        def make_rhs(g_lu, g_orr):
+            def rhs(tau, y):
+                v, eta, ky = y[0] + 1j * y[1], y[2] + 1j * y[3], y[4]
+                s2 = float(self.s2(tau))
+                a, b = S * kx + s2 * kz, S * kz - s2 * kx
+                k2 = self.kh2 + ky * ky
+                dv = (1 + g_orr) * a * ky * v / k2 - nu * k2 * v
+                deta = -1j * g_lu * b * v - nu * k2 * eta
+                return [dv.real, dv.imag, deta.real, deta.imag, -a]
+            return rhs
 
         t = np.asarray(t, dtype=float)
         y0 = [self.v0.real, self.v0.imag, self.eta0.real, self.eta0.imag, float(self.ky(t[0]))]
-        sol = solve_ivp(rhs, (t[0], t[-1]), y0, t_eval=t, method='DOP853', rtol=1e-13, atol=1e-15)
-        return sol.y[0] + 1j * sol.y[1], sol.y[2] + 1j * sol.y[3]
+        y = self.integrate(make_rhs, y0, t)
+        return y[0] + 1j * y[1], y[2] + 1j * y[3]
 
 
 def reference_split(times, kx, ky0, kz, g_lu, g_orr, S, A, w, nu, v0, eta0):
@@ -227,7 +275,29 @@ def selftest(tol=2e-8):
                 print('%6.3f  %5.2f  %5.2f   %-9s %8.1e  %8.1e  %8.1e' % (kx, g_lu, g_orr,
                       ('const' if ST == 0 else 'T=%.2f' % ST) + ('+m' if mean else ''), ev, ee, eE))
     print('worst: %.1e (limit %.0e)' % (worst2, tol))
-    return worst <= tol and worst2 <= tol
+    # switch times: the piecewise closed form against the integration of the equations, with the weights
+    # changing at t_lu and t_orr (both orders, a time before the start, one after the end)
+    print('switch times: piecewise closed form against the integration of the (v, eta, ky) equations')
+    print('   kx      lu: before -> after  at       orr: before -> after  at        v         eta       energy')
+    worst3 = 0.0
+    cases = [((1.0, 0.0, 3.0), (1.0, 1.0, -np.inf)), ((1.0, 1.0, -np.inf), (1.0, 0.0, 3.0)),
+             ((0.22, 0.11, 2.0), (0.22, 0.067, 6.0)), ((1.0, 0.2, 6.0), (1.0, 0.0, 2.0)),
+             ((0.5, 0.0, 4.0), (0.3, 0.0, 4.0)), ((0.4, 0.1, -2.0), (0.4, 0.1, 0.0)), ((0.3, 0.0, 99.0), (0.3, 0.0, 99.0))]
+    for kx in (0.0, TWOPI / 15.0):
+        for (lb, la, tl), (ob, oa, to) in cases:
+            for mean, A, ST in ((0.0, 1.0, 5.25), (0.7, 0.0, 0.0)):
+                m = Mode(kx, kz, np.pi, 1.0, 1.0, A, ST, 1e-3, 1 + 0.3j, 0.4 - 0.2j, mean=mean, g_lu=la, g_orr=oa,
+                         t_lu=tl, t_orr=to, lu_before=lb, orr_before=ob)
+                t = np.linspace(0.0, 4 * ST if ST > 0 else 12.0, 321)
+                ref = m.series(t)
+                v, eta = m.ode(t)
+                en = 0.5 * (m.k2(t) * np.abs(v) ** 2 + np.abs(eta) ** 2) / m.kh2
+                ev, ee, eE = errors(ref, v, eta, en)
+                worst3 = max(worst3, ev, ee, eE)
+                print('%6.3f  %5.2f -> %5.2f  %6.1f      %5.2f -> %5.3f  %6.1f   %-9s %8.1e  %8.1e  %8.1e' % (
+                    kx, lb, la, tl, ob, oa, to, ('const' if ST == 0 else 'T=%.2f' % ST) + ('+m' if mean else ''), ev, ee, eE))
+    print('worst: %.1e (limit %.0e)' % (worst3, tol))
+    return worst <= tol and worst2 <= tol and worst3 <= tol
 
 
 def read_csv(path):
@@ -251,12 +321,18 @@ def compare(path, tol):
     g = lambda k: par[k][0]
     # the table carries the two weights (g_lu, g_orr); tables of the filter-only test have G
     g_lu, g_orr = (g('g_lu'), g('g_orr')) if 'g_lu' in par else (g('G'), g('G'))
+    # switch times and the weights before them (tables of earlier versions have none: constant weights);
+    # -huge in the table is 'from the start'
+    sw = lambda k: (g(k) if g(k) > -1e300 else -np.inf) if k in par else -np.inf
     m = Mode(g('kx'), g('kz'), g('ky0'), g_lu, g('S'), g('s2_amplitude'), g('s2_period'), g('nu'),
              complex(*par['v0']), complex(*par['eta0']), mean=g('s2_mean'), start=g('s2_start'), t0=g('t0'),
-             g_lu=g_lu, g_orr=g_orr)
+             g_lu=g_lu, g_orr=g_orr, t_lu=sw('t_lu'), t_orr=sw('t_orr'),
+             lu_before=g('g_lu_before') if 'g_lu_before' in par else None,
+             orr_before=g('g_orr_before') if 'g_orr_before' in par else None)
     # ky0 in the table is the wavenumber at t0; Mode wants it at t = 0
     m.ky0 = g('ky0') + m.kx * m.S * m.t0 + m.kz * float(m.gamma(m.t0))
     m.k02 = m.kh2 + float(m.ky(m.t0)) ** 2
+    m.ks2 = float(m.k2(m.tsw))
     ref = m.series(d['t'])
     v = d['Re_v'] + 1j * d['Im_v']
     eta = d['Re_eta'] + 1j * d['Im_eta']
@@ -264,8 +340,9 @@ def compare(path, tol):
     eky = np.max(np.abs(d['ky'] - ref['ky']))
     eg = np.max(np.abs(d['gamma_code'] - ref['gamma']))
     es2 = np.max(np.abs(d['S2'] - ref['S2']))
-    print('%s: %d times, g_LU = %.4f g_Orr = %.4f   error v %.2e  eta %.2e  energy %.2e   ky %.1e  gamma %.1e  S2 %.1e'
-          % (path, d['t'].size, m.g_lu, m.g_orr, ev, ee, eE, eky, eg, es2))
+    print('%s: %d times, g_LU = %.4f g_Orr = %.4f%s   error v %.2e  eta %.2e  energy %.2e   ky %.1e  gamma %.1e  S2 %.1e'
+          % (path, d['t'].size, m.g_lu, m.g_orr, ' (switching: lu %g at %g, Orr %g at %g)' % (
+              m.lu_before, m.t_lu, m.orr_before, m.t_orr) if m.switching() else '', ev, ee, eE, eky, eg, es2))
     return max(ev, ee, eE) <= tol and max(eky, eg, es2) <= 1e-10
 
 

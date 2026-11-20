@@ -76,6 +76,7 @@ program hst
     call generate_initial_field()
   end if
   !$omp target update to(V)
+  call update_production_weights(time)     ! the time is that of the field now (a restart): the weights in effect there
   call stokes_setup()
   call stokes_apply()
   do m = 1, 3
@@ -168,6 +169,7 @@ contains
     if (cflmax > 0.0d0 .and. cfl > 0.0d0) deltat = cflmax/cfl
     if (dt_fixed > 0.0d0) deltat = min(deltat, dt_fixed)
     if (dt_fixed > 0.0d0 .and. cflmax <= 0.0d0) deltat = dt_fixed
+    deltat = production_clip_dt(time, deltat)      ! a step ends on a switch time of prod_lu_start, prod_orr_start
   end subroutine new_timestep
 
   ! Sets wall_reached on every rank when the terminal rank has spent wall_max
