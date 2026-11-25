@@ -88,5 +88,5 @@ test_*/
 *.pdf
 *.dat
 plot_runtimedata.ipynb
-compile-test_istm.sh
-compile-horeka2.sh
+# compile-test_istm.sh
+# compile-horeka2.sh

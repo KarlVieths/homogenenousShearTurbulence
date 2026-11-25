@@ -33,7 +33,7 @@ square-box run at 30 deg is a fifth sample if its settings are identical
 
 ## Steps
 
-1. **Build** on a login node, in the repository: `./compile-horeka2.sh`; the job picks
+1. **Build** in the repository: `./compile-horeka2.sh` (it submits one build job per GPU type to the matching partition and waits; `--status` shows what is built); the job picks
    `build-gpu-<device>/hst` from the GPU's name (the build of the 15 x 2 x 5 campaign).
 2. **Copy** this directory to a workspace (about 10-13 GB per run; `ws_find` gives the path of an allocated one) and work there:
 

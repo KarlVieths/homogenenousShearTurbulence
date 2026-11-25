@@ -1,0 +1,7 @@
+# run output (decks runs/*/hst.in are kept)
+logs/*
+!logs/.gitkeep
+test/
+runs/*/*
+!runs/*/hst.in
+__pycache__/

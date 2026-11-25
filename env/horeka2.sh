@@ -9,7 +9,8 @@
 #      nvidia-smi sees no GPU), e.g.  source env/horeka2.sh gpu b200
 #   2. an `export GPU_ARCH=...` made beforehand
 #   3. detection with nvidia-smi when sourced on a GPU node
-# Binaries are per architecture: keep them apart with BUILD, e.g.
+# The B200 nodes have ARM (Grace) CPUs, the H100/H200 nodes and the login nodes x86-64: build each binary on its kind of node
+# (./compile-horeka2.sh submits the build jobs).  Binaries are per architecture: keep them apart with BUILD, e.g.
 #   source env/horeka2.sh gpu b200;  make GPU=1 NCCL=1 BUILD=build-b200
 #
 # Module lists can be overridden when sourcing, e.g.

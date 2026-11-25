@@ -31,7 +31,7 @@ from `template.in` (only `S = cos theta`, `s2_amplitude = sin theta`,
    at the repository root; it has not run successfully on HoreKA2 yet, see
    `env/horeka2.sh`):
 
-        cd ~/hst && ./compile-horeka2.sh
+        cd ~/hst && ./compile-horeka2.sh      # one build job per GPU type, on the matching nodes; --status shows what is built
 
    The job picks `build-gpu-<device>/hst` (h100, h200 or b200) from the GPU's name;
    an H100 or H200 node without a build of its own uses `build-gpu-h100`.
