@@ -18,7 +18,8 @@ full precision; the document's manifest has ten decimals (--check compares with 
 
 The cost columns are estimates (the calibration is at the top; recalibrate it from the in-progress run):
 wall hours on the listed number of A100s = steps x 4 nx ny nz x NS_POINT / gpus / EFF[gpus], steps = t_max/dt,
-dt = DT0/r; memory 0.30 GB per million of 4 nx ny nz; disk 15 files (14 snapshots + the restart file) of
+dt = DT0/r; memory 0.30 GB per million of 4 nx ny nz (measured: examples/bench_1024.in, 20 steps, 39.3 GB per GPU on 8 GPUs = 0.294 GB per million;
+the device-memory leak of binaries before 2026-11-25, ~27 KiB per step, is on top: 8-13 GiB over a run); disk 15 files (14 snapshots + the restart file) of
 0.7 GB x nx ny nz/(168 x 165 x 252) per run.
 """
 import argparse

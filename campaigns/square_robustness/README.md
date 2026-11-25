@@ -7,7 +7,7 @@ of `campaigns/square_seed_ensemble`).  Plan, decks, criteria and the checklist a
 
 **Cost.**  The document counts A100 GPU-hours (about 690 for these 30 runs, 735 with stage 0).  HoreKA2 has no A100: its GPUs are H100, H200
 and B200.  With the H100 speed measured on HoreKA2 the study (stage 0 + stages 1a-3b) is about **425 GPU-hours on H100** (658 in the conservative reading), 326 (506) on H200 and 212 (328) on B200
-if each run is its own job; if jobs hold whole nodes (four runs per node) the held time is larger, 146 node-hours on H100 (226) ... 73 on B200 (113).  The H200 and B200 figures are estimates, not measurements.
+if each run is its own job; if jobs hold whole nodes (four runs per node) the held time is larger, 146 node-hours on H100 (226) ... 73 on B200 (113).  The H200 and B200 figures are estimates, not measurements, and about 5 % higher with the merged code at `dt_stat = 0.01` ("After the device-memory fix").
 **Which unit is billed is open**: the documentation says GPU hours, you were told node-hours; "Billing" below says how to find out in two minutes.
 See "Cost on HoreKA2" below; the A100 column of the stage table is the document's.
 
@@ -83,9 +83,13 @@ kit_project_usage                  # granted and used hours of the project (cpu 
 
 ```
 cd $HST_ROOT && git status && git log --oneline -3
+git branch --show-current                                   # production_filter (main has no production filter)
+git merge-base --is-ancestor f4f2e69 HEAD && echo "device-memory fix present"      # git pull first if not
 ./compile-horeka2.sh --status      # which builds exist, from which commit, 'STALE' if src/, Makefile or env/ changed since
 ./compile-horeka2.sh h100 h200 cpu # (re)build; add b200 once gpu-b200 is open; no argument = all of them
 ```
+
+**Every binary built before 2026-11-25 must be rebuilt**: it leaks device memory, about 27 KiB per step per rank (about 8 GiB over the 300 000 steps of a baseline-box run, 12-13 GiB over the 460 000-510 000 steps of `1e` and `3b`), fixed in `f4f2e69` (`transpose_tile_kernel`, `src/hst_mpi.f90`; results bit for bit unchanged).  Builds made by hand have no `BUILD_INFO`, so `--status` cannot tell they are old: rebuild them all.
 
 `compile-horeka2.sh` (the repository's build routine, rewritten 2026-11-25; the file is git-ignored: copy it to HoreKA2, e.g. `rsync -a compile-horeka2.sh <login>:$HST_ROOT/`) submits **one build job per GPU type to
 the matching partition** (`gpu-h100`, `gpu-h200`, `gpu-b200`), so that each binary is built on the kind of node it will run on (the B200 nodes are ARM Grace, the others x86-64), all in parallel, and waits for them; `cpu` is built where you run it.
@@ -139,7 +143,9 @@ for x in 1a-H9-t00:1 1c-R-t00:1 1e-B-res-t30:1.5 3b-H45-Rc6000-t00:1.68; do
 done
 ```
 
-About 1.6 or more: the central estimates of "Cost on HoreKA2" hold; about 1.0: the conservative ones.  Use the number (the smallest of the four, if they differ) as `F` below.  Repeat (b) with `HST_TEST_PARTITION=gpu-h200` if you will use it (it has no dev partition: the 8-minute job just queues).
+About 1.6 or more: the central estimates of "Cost on HoreKA2" hold; about 1.0: the conservative ones.  This is the first run of the merged code (leak fix, selective lift-up/Orr diagnostics) on a GPU of HoreKA2: the factor measured with the older binary (1.58) is superseded by this one.
+
+The tests also log the GPU memory (every minute): `./status.py --mem` shows, per GPU, the first and last sample in MiB and the growth per hour.  The peak is the real memory footprint of that grid (replace `est_mem_gb` of the manifest by it if it differs a lot); growth above a few MiB/h would mean the leak is back.  Use the number (the smallest of the four, if they differ) as `F` below.  Repeat (b) with `HST_TEST_PARTITION=gpu-h200` if you will use it (it has no dev partition: the 8-minute job just queues).
 
 **1.7 Two cheap checks the documentation leaves open** (a few minutes of GPU each; also run one after the other):
 
@@ -226,6 +232,7 @@ Finally `python3 analyse.py --baseline ...` again for the orientation, edge and 
 
 ### Rules
 
+* Look at `./status.py --mem` an hour into the first production job of each partition: the memory of every GPU must be flat (the fix of `f4f2e69` was verified on a small GPU with MPI transport only; NCCL and HoreKA2 are untested).
 * Never submit a run directory that another job is running in (`submit.py` guards its own submissions; look at `squeue` after any manual `sbatch`).
 * Keep a run and its chained continuation on one partition (the job resubmits itself into it).
 * `--pack 1 --exact-gpus` (one job per run, only its GPU) is the cheap choice if the project is billed per GPU and up to four times as expensive per run if it is billed per node: decide after 1.7 ("Billing").  No `gpu-h200-8` (one node, the CUDA fault of `hkn1970`).
@@ -297,6 +304,41 @@ in the conservative H100 case `1e` (57 h), `3b-H45` (50 h) and `3b-B` (90 h) nee
 `./submit.py <stages> --dry-run --speed <factor> --partition <partition>` prints the same numbers for the runs you select: the node-hours of each job (its longest run) and of the selection, and the idle share.
 To express the manifest's `est_wall_h` in H100 hours instead of A100 hours, set `NS_POINT` in `make_manifest.py` to the measured value (about 3.1e-9 in the central case, 4.7e-9 in the conservative one) and rerun it.
 
+### After the device-memory fix and the merge of 2026-11-25
+
+The estimates above were made with binaries from before the fix (the H100 timing is from a build of 19 Nov).  What changed in `production_filter` (`f4f2e69` leak fix, `d4ee453` merge of the selective lift-up/Orr switches):
+
+* **Memory: the per-point figure stands, the leak is on top.**  The old binary leaked about 27 KiB of device memory per step per rank (extrapolated from 1500 steps on a small GPU): 7.8 GiB over the 304 000 steps of a baseline-box run, 11.7 GiB for `1e` (456 000 steps), 13.2 GiB for `3b` (512 000 steps) - on top of the footprint below, for every binary built before 2026-11-25.
+  The footprint itself (`est_mem_gb`, 0.30 GB per million of 4 nx ny nz) is the measured peak of `examples/bench_1024.in` (nx = nz = 511, ny = 1024: 39.3 GB on each of 8 A100s = 314 GB for 1070 million points = 0.294 GB per million, FINDINGS.md "Scaling").  That run has 20 steps (the other benchmark decks 5-20),
+  so the leak in it is 0.5 MB per rank, not the 39.3 GB: the number is not leak-inflated.  Production runs of the old binaries are the ones that carry the leak (the "a few GB" for the 220 000-step 15 x 2 x 5 run of `doc.production/assets/campaign/README.md` is 3.2 GB of footprint by this figure; the leak would add 5.8 GiB).
+  The figure comes from 8 ranks with a distributed domain and NCCL buffers; a single GPU holding the whole domain may differ a little, which the pilot measures (`./status.py --mem`, step 1.6).  Every run fits one card (94, 141, 186 GB; the largest, `3b-B`, is 39 GB), so no decision changes.
+* **Speed.**  The leak itself costs 54 small allocations per step (about 0.1-1 % of a step; not measurable without a GPU).  The merge is the larger effect: `statistics/split_runtime.dat` (the lift-up/Orr energy budget) is now computed at every statistics sample.
+  CPU timing (one core, 63 x 128 x 63 grid, 40 steps; the machine is shared and some runs were 2-5 times slower under load, those are discarded; the scatter of the others is about 4 %): the code from before the merge takes 2.74 s/step at `dt_stat = 0.01` (a sample every 2-3 steps);
+  the merged code 2.84-2.90 s/step at 0.01 (**4-6 % more**), 2.68 at 0.1 and 2.77 at 0.5, i.e. at `dt_stat = 0.1` it is not slower than the old code was at 0.01.  The statistics pass costs roughly 7 % of a step per sample on this grid.  On a GPU the relative cost may differ (a reduction and a host copy per sample): the pilot decides.
+  So with the new `dt_stat` (below) the speed factors and the costs above stand; with the old 0.01 they would be about 5 % worse (H100 central: 446 GPU-hours instead of 425).
+* **Results are unchanged.**  A campaign deck (`1a-H3-t30`, 3 steps) gives bit-identical `Runtimedata`, `variances_runtime.dat` and `production_runtime.dat` with the code from before and after the merge (default `prod_lu = prod_orr = 1`; the decks do not set them), and the leak fix changed no result.
+  So the in-progress baseline runs, made with the old binary, remain comparable, and `analyse.py` (columns of those three files) needs no change.  The one new file, `statistics/split_runtime.dat`, is not used by the analysis.
+
+### Sampling intervals: `dt_stat = 0.1`, `dt_field = 100`
+
+From the time scales measured in the runs so far (S* = 7 and |S_tot| = 1 in all of them, so S t = t): the integral time is about one turnover, T_int = 7, and the bursting time is T_burst = 15-20 time units.
+
+| what the analysis needs | limit | |
+|---|---|---|
+| autocorrelation time of q2 (about T_int = 7), block means | `dt_stat` <= T_int/10 = 0.7 | any value below |
+| the bursting cycle (15-20) | `dt_stat` <= 2 | any value below |
+| box-cycle lines of `<v^2>(t)`, harmonics 1-4 of the recurrence times L/(S_i L_y), the shortest 1.5 (`1a-H3`, theta = 0) | Nyquist at 4/T: `dt_stat` <= T/8 = 0.19 | **0.1** (also the grid of the spectrum in `hstlib.py`, no interpolation) |
+| snapshots: independent fields are at least 2 T_burst = 40 apart | `dt_field` >= 40 | 100 is 5-7 bursts apart: independent |
+| spectra windows (`exz<i>.dat`, one per `dt_field`) | enough bursts per window (a few) and several windows after t = 400 for convergence checks; the mean over all windows does not depend on `dt_field` | 100 gives 6 bursts per window and 10 windows (an upper bound of about 200 from the same argument) |
+
+* **`dt_stat` 0.01 -> 0.1** (statistics every 22 steps instead of 2): the cost of the statistics drops from 4-6 % of the run to about 0.5 % (CPU timing above); `Runtimedata`, `variances_runtime.dat`, `production_runtime.dat` and `split_runtime.dat` shrink from 140 000 to 14 000 lines per run (35 MB to 3.5 MB each for the last).  0.1 is the smallest value
+  the box-cycle test needs; if you drop the harmonics 3 and 4 (`analyse.py` tests 1-4), 0.2 would do.  Samples per independent sample: 70 per T_int, 150-200 per burst.
+* **`dt_field` stays 100** (the planning document's value).  The time scales only bound it, to between 40 and about 200; inside that range the choice is about disk.  200 would halve the snapshots (7 instead of 14, the output 0.45 TB -> 0.24 TB) with no runtime gain (a snapshot is a few seconds of writing per 30 minutes to a day of run) and nothing the analysis needs,
+  but it is not worth it: the workspace quota is 250 TiB, a run costs hundreds of GPU-hours and a snapshot not written cannot be recovered.  The snapshots every 100 are also intermediate restart or start fields (as the earlier fields served as initial conditions in `kc_scan`), allow the physical-space two-point correlations the planning document mentions, and give 10 spectra windows after t = 400 instead of 5 for checks of convergence.
+  `dt_save` (the restart file, overwritten) stays 100: a crash loses at most 100 time units, 1/14 of a run.
+* **Errors of the means** (for the blocking check): the window t >= 400 (1000 time units) holds about 70 turnovers or 30-55 bursts.  A block of 50 is 7 T_int or 2.5-3.3 bursts: the standard error should plateau between block lengths 50 and 100; if it still rises from 50 to 100, use blocks of 100 (`--block 100`).
+* Both campaigns have `dt_stat = 0.1` (`template.in` of the seed ensemble and of this campaign; the in-progress square-box run still has 0.01: statistics are unaffected, only the sampling differs).  The old value: `python3 make_runs.py --dt-stat 0.01` (`check.py` then flags the difference to the seed ensemble's deck).
+
 ## The runs of a job, time limits, chaining
 
 Single-GPU runs go four to a node (one per GPU), runs of similar length together, as a job ends when its longest run ends.  The
@@ -320,7 +362,7 @@ The plan (`./submit.py ... --dry-run --speed <factor>`) prints, per job, its nod
   document's numbers except `1a-H3` (2.8 h against 3.5 h; the small grid is less efficient).  HoreKA2 has no A100: use `--speed` (above), and recalibrate the constants at the top from the in-progress run, as the
   document asks, and rerun it (and `make_runs.py` only if the grid changed).
 * **Precision.**  The manifest holds the lengths, `re`, S, s2 in full precision (the document's has ten decimals): the baseline box is bit for bit that of the seed decks.
-* **Deck values.**  `cflmax 0.7`, `dt_stat 0.01`, `dt_field = dt_save = 100`, `amplitude 7e-4`, `kpeak 8`, `t_max 1400` are those of `campaigns/square_seed_ensemble`
+* **Deck values.**  `cflmax 0.7`, `dt_stat 0.1`, `dt_field = dt_save = 100`, `amplitude 7e-4`, `kpeak 8`, `t_max 1400` are those of `campaigns/square_seed_ensemble` (`dt_stat` differs from the in-progress run on purpose: "Sampling intervals")
   (`check.py` compares every deck with its deck in everything the manifest does not set).  Confirm them against the in-progress square-box deck (a checklist item of the document).
 * **If stage 0 gives R >= 2**: more seeds per point, `python3 make_manifest.py --replicates 2` (stages 1-2 get `-r2` rows with seeds + 100), or longer runs,
   `python3 make_runs.py --tmax 2000`.  **If stage 1 adopts another box**, `python3 make_manifest.py --adopt <A_xc> <A_yc> <A_zc>` and `make_runs.py` regenerate 1d, 2-B, 3a, 3b-B

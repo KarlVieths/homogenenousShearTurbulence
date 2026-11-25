@@ -6,10 +6,12 @@
     python3 make_runs.py --ids 1a-H3-t00 ...   # only these runs
     python3 make_runs.py --tmax 2000           # longer runs (every deck; stage 0 gave R >= 2 and the answer is longer runs)
     python3 make_runs.py --init-q2 0.113       # amplitude per run such that the first q2 is 0.113 in every box
+    python3 make_runs.py --dt-stat 0.01        # the denser statistics sampling of the earlier campaigns (check.py then flags the difference to the seed ensemble's deck)
 
 L, re, S and s2_amplitude, the mesh and the seed are those of manifest.csv (make_manifest.py writes it);
-the other values are the seed ensemble's: prod_kc = 2 pi/sqrt 3, cflmax 0.7, t_max 1400, dt_stat 0.01,
-dt_field = dt_save = 100, amplitude 7e-4, kpeak 8 (see template.in).
+the other values are the seed ensemble's: prod_kc = 2 pi/sqrt 3, cflmax 0.7, t_max 1400, dt_stat 0.1, dt_field 100,
+dt_save 100, amplitude 7e-4, kpeak 8 (see template.in).  dt_stat follows from the time scales of the flow
+(integral time 7, bursting 15-20 time units) and the analysis: README, "Sampling intervals".
 The first q2 of the random field is proportional to amplitude^2 Lx Lz and independent of Ly and Re
 (measured with the code's generator on the 83-249 mode boxes: q2_0 = Q2_PER_A2_AREA amplitude^2 Lx Lz, within 3 %):
 with the fixed amplitude it is 0.027 in the 3 lambda_c box and 0.25 in the 9 lambda_c box, against 0.113 in the
@@ -28,6 +30,8 @@ Q2_PER_A2_AREA = 2099.0                     # first q2 = this x amplitude^2 x Lx
 KPEAK = 8.0
 CFL = 0.7
 T_MAX = 1400.0
+DT_STAT = 0.1                               # Runtimedata interval: T_int/70, a quarter of the shortest box recurrence time / 4 harmonics
+DT_FIELD = 100.0                            # snapshot interval and spectra window (the planning document's value)
 
 here = os.path.dirname(os.path.abspath(__file__))
 
@@ -38,6 +42,8 @@ def main():
     ap.add_argument('--stages', default='', help='comma-separated stages (1a,1b,...); default all')
     ap.add_argument('--ids', nargs='*', default=[], help='only these run ids')
     ap.add_argument('--tmax', type=float, default=T_MAX)
+    ap.add_argument('--dt-stat', type=float, default=DT_STAT, help='interval of the statistics (Runtimedata, spectra samples)')
+    ap.add_argument('--dt-field', type=float, default=DT_FIELD, help='interval of the velocity snapshots and of the column-spectra windows')
     ap.add_argument('--amplitude', type=float, default=AMPLITUDE)
     ap.add_argument('--init-q2', type=float, default=0.0, help='scale the amplitude per run to this first q2 (default: the fixed amplitude)')
     ap.add_argument('--force', action='store_true', help='overwrite decks of runs that have output')
@@ -65,7 +71,7 @@ def main():
             '@ALFA0@': repr(2 * math.pi / float(r['Lx'])), '@BETA0@': repr(2 * math.pi / float(r['Lz'])),
             '@RE@': r['re'], '@S@': r['S'], '@S2@': r['s2_amplitude'],
             '@SEED@': r['seed'], '@AMPLITUDE@': '%.6g' % amp, '@KPEAK@': repr(KPEAK),
-            '@KC@': repr(KC), '@CFL@': repr(CFL), '@TMAX@': repr(a.tmax),
+            '@KC@': repr(KC), '@CFL@': repr(CFL), '@TMAX@': repr(a.tmax), '@DTSTAT@': '%-20s' % repr(a.dt_stat), '@DTFIELD@': '%-19s' % repr(a.dt_field),
         }.items():
             text = text.replace(key, val)
         assert '@' not in text, 'unreplaced placeholder'

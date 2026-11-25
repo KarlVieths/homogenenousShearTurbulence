@@ -28,6 +28,8 @@
 #   MARGIN    seconds before the limit at which a run stops (default 300)
 #   MAXSEG    maximum number of chained jobs (default 10), SEG the current one
 #   STOP_POLL seconds between looks for STOP files (default 60)
+#   MEMLOG    seconds between samples of the GPU memory in use (default 600, 0 = off): logs/gpumem-<jobid>.log, one line per sample
+#             'elapsed_s gpu0=<MiB> gpu1=<MiB> ...'; flat lines = no device-memory leak (./status.py --mem summarises)
 #   LAUNCH    how a run is started (default "mpirun --bind-to none -np $RUN_GPUS")
 #
 #SBATCH --job-name=hst-rob
@@ -140,8 +142,16 @@ watch() {
 }
 watch &
 wpid=$!
+mpid=
+if [ "${MEMLOG:-600}" -gt 0 ] 2>/dev/null; then
+  ( sleep 60; while :; do
+      echo "$SECONDS $(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits | awk -F', *' '{printf "gpu%s=%s ", $1, $2}')" >> $CAMP/logs/gpumem-$SLURM_JOB_ID.log
+      sleep ${MEMLOG:-600}
+    done ) &
+  mpid=$!
+fi
 [ ${#pids[@]} -gt 0 ] && wait "${pids[@]}"
-kill $wpid 2>/dev/null
+kill $wpid $mpid 2>/dev/null
 
 # classify the runs of this job
 incomplete=

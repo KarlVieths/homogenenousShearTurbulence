@@ -5,6 +5,7 @@
     ./status.py --stages 3a        # only these stages
     ./status.py --base test        # the test runs of ./submit.py --test
     ./status.py --baseline-q2 0.1  # q2 of the baseline (default: the mean of ../square_seed_ensemble/seed_ensemble.csv)
+    ./status.py --mem              # GPU memory of the jobs (logs/gpumem-*.log): start, last sample, growth per hour
     ./status.py --stop-laminar     # touch STOP in the stage-3a runs that the check flags (the job ends those runs, README)
 
 state: new (no restart file), started, DONE (t_max reached), INCOMPLETE (stopped by the time limit, a chained
@@ -52,7 +53,30 @@ def main():
     ap.add_argument('--manifest', default='manifest.csv')
     ap.add_argument('--baseline-q2', type=float, default=0.0)
     ap.add_argument('--stop-laminar', action='store_true')
+    ap.add_argument('--mem', action='store_true', help='summarise the GPU-memory logs of the jobs (a leak shows as growth)')
     a = ap.parse_args()
+    if a.mem:
+        import glob
+        print(f"{'job log':32s} {'gpu':5s} {'samples':>7s} {'first MiB':>10s} {'last MiB':>9s} {'max MiB':>8s} {'growth MiB/h':>13s}")
+        for f in sorted(glob.glob(os.path.join(HERE, 'logs', 'gpumem-*.log'))):
+            series = {}
+            for l in open(f):
+                p = l.split()
+                try:
+                    el = float(p[0])
+                except (ValueError, IndexError):
+                    continue
+                for kv in p[1:]:
+                    if '=' in kv:
+                        k, v = kv.split('=')
+                        try:
+                            series.setdefault(k, []).append((el, float(v)))
+                        except ValueError:
+                            pass
+            for k, s in sorted(series.items()):
+                grow = (s[-1][1] - s[0][1])/((s[-1][0] - s[0][0])/3600.0) if len(s) > 1 and s[-1][0] > s[0][0] else float('nan')
+                print(f"{os.path.basename(f):32s} {k:5s} {len(s):7d} {s[0][1]:10.0f} {s[-1][1]:9.0f} {max(v for _, v in s):8.0f} {grow:13.1f}")
+        return
     stages = [s for s in a.stages.split(',') if s]
     q2b = a.baseline_q2
     seeds = os.path.join(HERE, '..', 'square_seed_ensemble', 'seed_ensemble.csv')

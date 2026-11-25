@@ -176,7 +176,7 @@ def main():
         name = 'hst-rob-' + ('test' if a.test else (rs[0]['stage'] if len({r['stage'] for r in rs}) == 1 else 'mix'))
         env = dict(os.environ, RUNS=' '.join(f'{base}/{r["id"]}' for r in rs), RUN_GPUS=str(g))
         if a.test:
-            env.update(MARGIN=os.environ.get('MARGIN', '120'), MAXSEG=os.environ.get('MAXSEG', '1'))   # MAXSEG=2: the chain test (README)
+            env.update(MARGIN=os.environ.get('MARGIN', '120'), MAXSEG=os.environ.get('MAXSEG', '1'), MEMLOG=os.environ.get('MEMLOG', '60'))   # MAXSEG=2: the chain test (README)
         env['HST_ROOT'] = os.environ.get('HST_ROOT', os.path.expanduser('~/hst'))
         ng = len(rs)*g if a.exact_gpus else a.node_gpus
         cmd = ['sbatch', '--parsable', '--export=ALL', f'--job-name={name}', f'--gres=gpu:{ng}',

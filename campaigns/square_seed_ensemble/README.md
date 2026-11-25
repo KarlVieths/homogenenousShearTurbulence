@@ -95,7 +95,7 @@ The values the document marks as to be confirmed against the in-progress deck we
 deck is not in the repository); the decks follow the 15 x 2 x 5 campaign's deck (`filter_smooth_kc3.63`) where the document's
 template left a choice:
 
-* `cflmax = 0.7` and `dt_stat = 0.01`, as in the campaign (the document had 1.0 and 0.5); `dt_field = dt_save = 100`
+* `cflmax = 0.7`, as in the campaign (the document had 1.0); `dt_stat = 0.1` from the time scales of the flow (integral time 7, bursting 15-20; see `campaigns/square_robustness/README.md`, "Sampling intervals"; the campaign had 0.01 and the document 0.5); `dt_field = dt_save = 100`
   as in the document, so a crash loses up to 100 time units (about 1 h);
 * `time_from_restart = .false.` in the deck (the job sets it when it resumes; with `.true.` and no
   restart file the code starts at 0 anyway);
