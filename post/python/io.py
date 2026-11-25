@@ -244,6 +244,27 @@ def read_runtimedata(path: str | Path):
     return data
 
 
+def read_split_runtime(path: str | Path):
+    """Read ``split_runtime.dat`` (lift-up / Orr split of the energy budget, selective_lu_orr.md section 4).
+
+    Returns a structured array with fields ``time, E_tor, E_pol, P_LU, P_Orr,
+    gP_LU, gP_Orr, diss, P_LU_kpar0, P_Orr_kperp0, E_00``, per unit volume like
+    ``Runtimedata``: the toroidal and poloidal energy (``E_tor`` holds the (0,0)
+    column's fluctuation, ``E_00``), the production of the two mechanisms with
+    full weight (``P_LU``, ``P_Orr``; their sum is ``-S uv - S2 vw``) and with
+    the weights of the run (``gP_LU``, ``gP_Orr``; what enters the budget
+    ``d(E_tor + E_pol)/dt = gP_LU + gP_Orr - diss``), and the two sums over the
+    columns where one mechanism acts alone (``P_LU`` at ``k_par = 0``, ``P_Orr``
+    at ``k_perp = 0``).
+    """
+    names = ("time", "E_tor", "E_pol", "P_LU", "P_Orr", "gP_LU", "gP_Orr", "diss",
+             "P_LU_kpar0", "P_Orr_kperp0", "E_00")
+    data = _loadtxt(path)
+    if data.shape[1] == len(names):
+        return data.view(dtype=[(n, float) for n in names]).reshape(-1)
+    return data
+
+
 def read_variances(path: str | Path):
     """Read ``variances_runtime.dat``: ``time, uu, vv, ww, uw``.
 

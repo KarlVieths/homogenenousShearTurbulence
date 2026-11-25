@@ -41,6 +41,7 @@ module hst_equations
   use hst_derivatives, only: fill_ghosts, fill_ghosts_field, shear_shifts, s2_of, s2_integral
   use hst_stokes, only: stokes_active, stokes_force, stokes_apply
   use hst_damping, only: damping_active, damping_update, damping_mask, damping_soft_factor
+  use hst_production, only: update_production_weights
   use hst_linsolve, only: line_solve, KIND_D2V, KIND_ETA, KIND_D0, KIND_DY
   use hst_fft, only: VVdz
   use hst_transforms, only: transform_to_physical, build_products, products_to_spectral, compute_cfl
@@ -62,6 +63,7 @@ contains
   subroutine timestep()
     integer(C_INT) :: i, m
     real(C_DOUBLE) :: dt_sub
+    call update_production_weights(time)      ! the weights of the production for the whole step (switch times: hst_production)
     do i = 1, 3
       call tic()
       if (.not. linear .or. i == 3) call transform_to_physical()
@@ -99,19 +101,20 @@ contains
     real(C_DOUBLE), intent(in) :: ODE(3)
     integer(C_INT) :: ix, iy, iz, j
     complex(C_DOUBLE_COMPLEX) :: unkn, impl, expl, f, dv
-    real(C_DOUBLE) :: helm, biharm, s2now, force, g, gsoft, gp
+    real(C_DOUBLE) :: helm, biharm, s2now, force, g, gsoft, glc, goc
 
     s2now = s2_of(time)
     gsoft = damping_soft_factor()
     call stokes_force(time)
     !$omp target teams distribute parallel do collapse(3) default(none) &
-    !$omp shared(V, rhs, oldrhs, der, k2, ialfa, ibeta, gdamp, gprod, ni, S, s2now, gsoft, fy, deltat, ODE, nx0, nxN, nz, ny0, nyN) &
-    !$omp private(ix, iy, iz, j, unkn, impl, expl, f, dv, helm, biharm, force, g, gp)
+    !$omp shared(V, rhs, oldrhs, der, k2, ialfa, ibeta, gdamp, glu, gorr, ni, S, s2now, gsoft, fy, deltat, ODE, nx0, nxN, nz, ny0, nyN) &
+    !$omp private(ix, iy, iz, j, unkn, impl, expl, f, dv, helm, biharm, force, g, glc, goc)
     do ix = nx0, nxN
       do iz = -nz, nz
         do iy = ny0, nyN
           g = gsoft*gdamp(iz, ix)          ! large-scale damping rate of the column (soft only)
-          gp = gprod(iz, ix)               ! production filter of the column (1: unfiltered)
+          glc = glu(iz, ix)                 ! weight of the lift-up in the column (prod_lu G; 1: unfiltered)
+          goc = gorr(iz, ix)                ! weight of the Orr energy transfer in the column (prod_orr G)
           ! v equation
           unkn = 0.0d0; impl = 0.0d0; dv = 0.0d0
           do j = -2, 2
@@ -121,7 +124,7 @@ contains
             impl = impl + ni*biharm*V(iy + j, iz, ix, 2)
             dv = dv + der(iy, 1, j)*V(iy + j, iz, ix, 2)
           end do
-          expl = -g*unkn - (1.0d0 - gp)*(S*ialfa(ix) + s2now*ibeta(iz))*dv     ! damping; production removed from the column
+          expl = -g*unkn - (1.0d0 - goc)*(S*ialfa(ix) + s2now*ibeta(iz))*dv     ! damping; Orr transfer removed from the column
           rhs(iy, iz, ix, 2) = ODE(1)*unkn/deltat + impl - ODE(3)*oldrhs(iy, iz, ix, 2) + ODE(2)*expl
           oldrhs(iy, iz, ix, 2) = expl
           ! eta equation (mean mode: u and w packed as one complex number)
@@ -138,7 +141,7 @@ contains
               unkn = unkn + der(iy, 0, j)*f
               impl = impl + ni*helm*f
             end if
-            expl = expl + gp*(s2now*ialfa(ix) - S*ibeta(iz))*der(iy, 0, j)*V(iy + j, iz, ix, 2)   ! tilting of the mean vorticity
+            expl = expl + glc*(s2now*ialfa(ix) - S*ibeta(iz))*der(iy, 0, j)*V(iy + j, iz, ix, 2)   ! tilting of the mean vorticity (lift-up)
           end do
           if (ix == 0 .and. iz == 0) expl = expl + dcmplx(0.0d0, force)
           expl = expl - g*unkn                     ! large-scale damping of eta (mean column: of u, w)

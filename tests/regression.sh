@@ -11,7 +11,7 @@ build=${1:-build-cpu}; np=${2:-1}; npy=1; update=
 for a in "${@:3}"; do
   if [ "$a" = "--update" ]; then update=--update; else npy=$a; fi
 done
-DECKS="small small_s2x small_stokes"
+DECKS="small small_s2x small_stokes small_prod small_split"
 status=0
 for d in $DECKS; do
   work=$(mktemp -d); sed "s/&mesh /\&mesh npy = $npy, /" "$here/tests/decks/$d.in" > "$work/hst.in"

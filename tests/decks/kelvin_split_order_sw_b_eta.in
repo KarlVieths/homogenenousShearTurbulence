@@ -1,0 +1,8 @@
+! test_kelvin_s2 deck (selective_lu_orr.md, section 9): order of accuracy of eta with two switches inside the run (finest pair >= 2.8, nu = 1e-12)
+! as kelvin_split_order_b_eta; the lift-up weight 1 -> 0.2 at t = 1.09375, the Orr weight 1 -> 0.5 at t = 2.1875 (both on the grid of every level).
+&mesh  nx = 1, ny = 256, nz = 1, alfa0 = 0.41887902047863906, beta0 = 1.2566370614359172, ly = 2.0 /
+&physics  re = 1e+12, S = 1.0, linear = .true., exact_shift = .true., s2_amplitude = 1, s2_period = 1.75 /
+&time_control  deltat = 0.0546875, cflmax = 0.0, t_max = 3.5, nstep = 100000, dt_stat = 1e9, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 6.0 /
+&production  prod_kc = 0, prod_lu = 0.2, prod_orr = 0.5, prod_lu_start = 1.09375, prod_orr_start = 2.1875 /
+&kelvin  ix_mode = 1, iz_mode = 1, iy_mode = 1, tol = 5e-05, dt_out = 0.21875, refine = 2, order_fine_min = 2.8, order_qty = 'eta' /

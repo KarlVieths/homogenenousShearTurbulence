@@ -50,6 +50,13 @@ module hst_params
   ! production filter (hst_production, doc.production/production_filter.md): the mean shear produces only in the columns with
   ! |k_h| = sqrt(kx^2 + kz^2) >= prod_kc (smoothstep from 0 to 1 over prod_kc (1 -+ prod_edge)).  0: off.
   real(C_DOUBLE), save :: prod_kc, prod_edge
+  ! selective suppression (doc.production/selective_lu_orr.md): weights of the two mechanisms of the production, the lift-up
+  ! (tilting of the mean vorticity, source of eta) and the Orr energy transfer (tilting of the wavevector, the part of the d2v
+  ! equation that remains); the effective weight of a column is prod_lu G(k_h) and prod_orr G(k_h).  1: the production filter as is.
+  real(C_DOUBLE), save :: prod_lu, prod_orr
+  ! the time from which each weight applies (selective_lu_orr.md, section 9): before it the mechanism acts with the filter weight G
+  ! alone, from it with prod_lu G (prod_orr G).  The default -huge(1d0) is 'from the start of the run' (also after a restart).
+  real(C_DOUBLE), save :: prod_lu_start, prod_orr_start
 
   !------------------------------------------------------- clock and I/O ----
   real(C_DOUBLE), save :: deltat, dt_fixed, cflmax, cfl = 0.0d0   ! dt_fixed: deck value, 0 = from cflmax
@@ -92,6 +99,8 @@ module hst_params
   real(C_DOUBLE), allocatable, save :: k2(:, :)         ! alfa^2+beta^2 (iz, ix)
   real(C_DOUBLE), allocatable, save :: gdamp(:, :)      ! damping rate of the column (iz, ix); hard mask: 1 = masked
   real(C_DOUBLE), allocatable, save :: gprod(:, :)      ! production filter G of the column (iz, ix); 1 = full production
+  real(C_DOUBLE), allocatable, save :: glu(:, :)        ! weight of the lift-up (eta source) of the column: prod_lu*G
+  real(C_DOUBLE), allocatable, save :: gorr(:, :)       ! weight of the Orr energy transfer of the column: prod_orr*G
   complex(C_DOUBLE_COMPLEX), allocatable, save :: ialfa(:), ibeta(:)
   integer(C_INT), allocatable, save :: izd(:)           ! z mode -> padded index
   real(C_DOUBLE), save :: dx, dy, dz, factor            ! CFL spacings, 1/(2 nxd nzd)

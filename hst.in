@@ -77,4 +77,11 @@
 !&production
 !  prod_kc = 3.6275987284684357    ! cutoff (0 = off); 2 pi/sqrt 3: wavelength sqrt 3, whose square is the area of the 3 x 1 box
 !  prod_edge = 0.3                 ! relative half width of the smoothstep edge, G from 0 at prod_kc (1 - edge) to 1 at prod_kc (1 + edge); 0 = step
+!  prod_lu = 1.0                   ! weight of the lift-up (the eta source) times G: 0 removes it (doc.production/selective_lu_orr.md)
+!  prod_orr = 1.0                  ! weight of the Orr energy transfer times G: 0 removes it; both 1 = the production filter above
+!  prod_lu_start = 2000.0          ! the weights prod_lu, prod_orr apply from these times (before: G alone); default from the start;
+!  prod_orr_start = 2000.0         ! a step is cut to end on the time, the log says when the weights change
 !/
+! No lift-up, classical SS-HST otherwise:   &production  prod_kc = 0.0, prod_lu = 0.0, prod_orr = 1.0 /
+! No Orr transfer, in the filtered box:     &production  prod_kc = 3.6276, prod_edge = 0.3, prod_lu = 1.0, prod_orr = 0.0 /
+! Lift-up switched off at t = 2000:         &production  prod_kc = 0.0, prod_lu = 0.0, prod_orr = 1.0, prod_lu_start = 2000.0 /

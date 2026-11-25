@@ -1,0 +1,8 @@
+! Budget of the energy with the weights of the two mechanisms (selective_lu_orr.md, section 5.3; tests/split_budget.py):
+! nonlinear run, d/dt (E_tor + E_pol) = sum glu P_LU + sum gorr P_Orr - diss.  exact_shift: the default shift has an O(dy^2) error of its own.
+! Weights 0.5 (lift-up) and 0.3 (Orr) times a smooth filter (G from 0 to 1 between k_h = 4.2 and 7.8: ix = 2..3, iz = 0..1), S2 = 0.3 + 0.5 sin(2 pi t/2).
+&mesh  nx = 15, ny = 128, nz = 15, alfa0 = 2.0943951023931953, beta0 = 6.283185307179586, ly = 2.0 /
+&physics  re = 200.0, S = 1.0, linear = .false., exact_shift = .true., s2_mean = 0.3, s2_amplitude = 0.5, s2_period = 2.0 /
+&time_control  deltat = 0.002, cflmax = 0.0, t_max = 0.8, nstep = 100000, dt_stat = 0.01, dt_field = 1e9, dt_save = 1e9, time = 0.0, time_from_restart = .false. /
+&init  amplitude = 0.05, seed = 1, kpeak = 4.0 /
+&production  prod_kc = 6.0, prod_edge = 0.3, prod_lu = 0.5, prod_orr = 0.3 /
