@@ -627,7 +627,7 @@ contains
     call c_f_pointer(pB, dB, [ldb, n1, nplanes])
     stream = transfer(target_stream(), stream)
     call transpose_tile_kernel<<<dim3((n1 + TILE - 1)/TILE, (n2 + TILE - 1)/TILE, nplanes*nblocks), &
-                                 dim3(TILE, TILE/ROWS_PER_THREAD, 1), 0, stream>>> (dA, dB, n1, n2, nplanes, jb)
+                                 dim3(TILE, TILE/ROWS_PER_THREAD, 1), 0, stream>>> (dA, dB, lda, ldb, n1, n2, nplanes, nblocks, jb)
 #else
     integer(C_INT) :: block, plane, i, j
     do block = 1, nblocks
@@ -647,10 +647,10 @@ contains
   ! TILE x TILE/ROWS_PER_THREAD threads, each doing ROWS_PER_THREAD rows.
   ! The tile is padded by one so that the transposed read has no bank
   ! conflicts.
-  attributes(global) subroutine transpose_tile_kernel(A, B, n1, n2, nplanes, jb)
-    integer(C_INT), value :: n1, n2, nplanes, jb
-    complex(C_DOUBLE_COMPLEX), device, intent(in) :: A(:, :, :, :)
-    complex(C_DOUBLE_COMPLEX), device, intent(inout) :: B(:, :, :)
+  attributes(global) subroutine transpose_tile_kernel(A, B, lda, ldb, n1, n2, nplanes, nblocks, jb)
+    integer(C_INT), value :: lda, ldb, n1, n2, nplanes, nblocks, jb
+    complex(C_DOUBLE_COMPLEX), device, intent(in) :: A(lda, n2, nplanes, nblocks)
+    complex(C_DOUBLE_COMPLEX), device, intent(inout) :: B(ldb, n1, nplanes)
     complex(C_DOUBLE_COMPLEX), shared :: t(TILE + 1, TILE)   ! (Fortran: not "tile", that is TILE)
     integer(C_INT) :: i0, j0, plane, block, tx, ty, k
     i0 = (blockIdx%x - 1)*TILE
